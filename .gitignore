@@ -1,0 +1,47 @@
+# R files
+.Rproj.user
+.Rhistory
+.RData
+.Ruserdata
+
+# Mac system files
+.DS_Store
+
+# Image files
+*.png
+*.gif
+*.jpg
+*.mp4
+*.csv
+*.npy
+*.db
+*.pt
+*.raw
+
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Environments
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+google-cloud-sdk/
+google-cloud-sdk
+
+# Credential files
+seabirdaidatabase-0a68840d87ff.json
+*credential*
+
+# Folders
+data/
+out/
+dump/
+Eiders2-1/
+Eiders2-2/
+Ejder*

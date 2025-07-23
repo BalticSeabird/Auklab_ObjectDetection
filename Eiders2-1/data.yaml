@@ -1,0 +1,13 @@
+train: train/images
+val: valid/images
+test: test/images
+
+nc: 6
+names: ['-', 'crow', 'eider_female', 'eider_male', 'gull', 'razorbill']
+
+roboflow:
+  workspace: ai-course-2024
+  project: eiders2
+  version: 1
+  license: CC BY 4.0
+  url: https://universe.roboflow.com/ai-course-2024/eiders2/dataset/1

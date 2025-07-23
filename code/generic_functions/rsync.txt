@@ -1,0 +1,8 @@
+rsync -r --progress jonas@77.235.243.22:/home/jonas/Documents/vscode/Eider_detection/data/annotations_yaml/ Desktop/eider01
+venv/bin/python labelImageLab.py -c eider_classes.txt
+
+python3 -m venv venv
+source venv/bin/activate
+
+scp jonas@77.235.243.22:/home/jonas/Documents/vscode/Eider_detection/video_out/EjderNVR_EJDER6_2024-05-03_08.00.00_001015_001215_eider_model_nano_v5852.mp4 Downloads
+scp jonas@77.235.243.22:/home/jonas/Documents/vscode/Eider_detection/video_out/EjderNVR_EJDER1_2024-04-28_04.00.00_001425_001625_eider_model_nano_v5852.mp4 Downloads
