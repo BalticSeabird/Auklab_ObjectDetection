@@ -4,7 +4,7 @@ import os
 from pathlib import Path
 
 # === Parameters ===
-video_path = Path("video/TRI2L_20250530T142000.mkv")
+video_path = Path("video/Auklab1_FAR6_2024-07-12_13.00.00.mp4")
 output_dir = "images"
 num_samples = 50
 
