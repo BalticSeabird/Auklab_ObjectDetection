@@ -10,7 +10,7 @@ from functions import send_email
 device = sys.argv[1]
 stat = sys.argv[2]
 password = input("Please type gmail password ... ")
-datelimit = pd.to_datetime("2020-05-11 12:00:00")
+datelimit = pd.to_datetime("2019-05-11 12:00:00") # Start date...
 
 # Send start email
 now = pd.to_datetime("now").strftime("%Y-%m-%d %H:%M:%S")
@@ -19,10 +19,10 @@ send_email(password, now, device, stat, filename, start = True)
 
 
 # Load a pretrained YOLO model
-modelpath = Path("models/eider_model_nano_v5852.pt")
+modelpath = Path("models/auklab_model_nano_v3851.pt")
 model = YOLO(modelpath)
 modelname = modelpath.stem
-output_dir1 = f'../../../../../../mnt/BSP_NAS2_work/eider_model/inference/2024/{modelname}/'
+output_dir1 = f'../../../../../../mnt/BSP_NAS2_work/auklab_model/inference/2024/{modelname}/'
 
 if os.path.exists(output_dir1) == False:
     os.makedirs(output_dir1)
