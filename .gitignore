@@ -18,6 +18,7 @@
 *.pt
 *.raw
 *.txt
+*.mkv
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
