@@ -19,7 +19,7 @@ send_email(password, now, device, stat, filename, start = True)
 
 
 # Load a pretrained YOLO model
-modelpath = Path("models/auklab_model_nano_v3851.pt")
+modelpath = Path("models/auklab_model_nano_v4295.pt")
 model = YOLO(modelpath)
 modelname = modelpath.stem
 output_dir1 = f'../../../../../../mnt/BSP_NAS2_work/auklab_model/inference/2024/{modelname}/'

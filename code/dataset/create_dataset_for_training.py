@@ -6,7 +6,7 @@ from pathlib import Path
 
 # Source folders
 source_folder = Path("../../../../../mnt/BSP_NAS2/Software_Models/Seabirds_AI/Annotations/Seabird_detection/")
-source_dirs = ['seabird1', 'seabird2', 'seabird3', 'seabird4']
+source_dirs = ['seabird1', 'seabird2', 'seabird3', 'seabird4', 'seabird5']
 
 
 # Destination base folder
