@@ -39,7 +39,7 @@ basic_path = "dataset2/images"
 annotate_dataset_with_model(
     model_path="models/auklab_model_nano_v4295.pt",
     image_dir="../../../../../../../mnt/BSP_NAS2/Software_Models/fish_model/annotations/all/images",
-    save_label_dir="../../../../../../../mnt/BSP_NAS2/Software_Models/seabird_fish/annotations/pseudo_labels_auklab_model_fish_images",
+    save_label_dir="../../../../../../../mnt/BSP_NAS2_work/seabird_fish_model/annotations/pseudo_labels_auklab_model_fish_images",
     class_offset=0  # assumes model1 trained on class IDs 0–n1
 )
 
@@ -48,6 +48,6 @@ NUM_CLASSES_MODEL1 = 3  # Adjust to match actual number of classes in model1
 annotate_dataset_with_model(
     model_path="models/auklab_model_nano_fishJuly2025.pt",
     image_dir="../../../../../../../mnt/BSP_NAS2/Software_Models/auklab_model/Annotations/Seabird_detection/all/images",
-    save_label_dir="../../../../../../../mnt/BSP_NAS2/Software_Models/seabird_fish/annotations/pseudo_labels_fish_model_auklab_images",
+    save_label_dir="../../../../../../../mnt/BSP_NAS2_work/seabird_fish_model/annotations/pseudo_labels_fish_model_auklab_images",
     class_offset=NUM_CLASSES_MODEL1
 )
