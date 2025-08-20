@@ -2,7 +2,7 @@ import random
 import shutil
 from pathlib import Path
 
-def sample_dataset(image_dir, label_dir, output_dir, sample_size=2000, seed=42):
+def sample_dataset(image_dir, label_dir, output_dir, sample_size=100, seed=1):
     random.seed(seed)
 
     image_paths = []
@@ -34,8 +34,17 @@ def sample_dataset(image_dir, label_dir, output_dir, sample_size=2000, seed=42):
 
 # Example usage
 sample_dataset(
-    image_dir="dataset/images",      # your merged images folder
-    label_dir="merged_labels",       # your merged labels folder
-    output_dir="sample_2000",        # new folder for roboflow
-    sample_size=2000
+    image_dir="../../../../../../../mnt/BSP_NAS2/Software_Models/auklab_model/Annotations/Seabird_detection/all/images",      # your merged images folder
+    label_dir="../../../../../../../mnt/BSP_NAS2_work/seabird_fish_model/annotations/combined_labels_bird_images",       # your merged labels folder
+    output_dir="data_for_validation/seabird_sample_200",        # new folder for roboflow
+    sample_size=200
 )
+
+
+# Fish images: 
+#image_dir="../../../../../../../mnt/BSP_NAS2/Software_Models/fish_model/annotations/train/images",      # your merged images folder
+#label_dir="../../../../../../../mnt/BSP_NAS2_work/seabird_fish_model/annotations/combined_labels_fish_images",       # your merged labels folder
+    
+# Seabird images: 
+#image_dir="../../../../../../../mnt/BSP_NAS2/Software_Models/auklab_model/Annotations/Seabird_detection/all/images",      # your merged images folder
+#label_dir="../../../../../../../mnt/BSP_NAS2_work/seabird_fish_model/annotations/combined_labels_bird_images",       # your merged labels folder

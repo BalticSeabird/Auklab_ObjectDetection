@@ -5,12 +5,12 @@ from glob import glob
 from pathlib import Path
 
 # Source folders
-source_folder = Path("../../../../../mnt/BSP_NAS2/Software_Models/Seabirds_AI/Annotations/Seabird_detection/")
-source_dirs = ['seabird1', 'seabird2', 'seabird3', 'seabird4', 'seabird5']
+source_folder = Path("../../../../../mnt/BSP_NAS2/Software_Models/seabird_fish/annotations/validated")
+#source_dirs = ['seabird1', 'seabird2', 'seabird3', 'seabird4', 'seabird5']
 
 
 # Destination base folder
-dest_base = 'dataset'
+dest_base = 'dataset/seabird_fish1394'
 splits = ['train', 'val', 'test']
 split_ratios = [0.8, 0.1, 0.1]
 
@@ -21,14 +21,13 @@ for split in splits:
 
 # Collect all image-label pairs
 image_label_pairs = []
-for source in source_dirs:
-    longpath = source_folder.joinpath(source)
-    image_files = longpath.rglob('*.jpg')
-    for img_path in image_files:
-        img_name = Path(img_path).stem
-        label_path = os.path.join(longpath, 'labels', img_name + '.txt')
-        if os.path.exists(label_path):
-            image_label_pairs.append((img_path, label_path))
+longpath = source_folder
+image_files = longpath.rglob('*.jpg')
+for img_path in image_files:
+    img_name = Path(img_path).stem
+    label_path = os.path.join(longpath, 'labels', img_name + '.txt')
+    if os.path.exists(label_path):
+        image_label_pairs.append((img_path, label_path))
 
 # Shuffle and split
 random.shuffle(image_label_pairs)

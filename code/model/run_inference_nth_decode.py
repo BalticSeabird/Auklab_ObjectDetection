@@ -22,15 +22,14 @@ datelimit = pd.to_datetime("2019-05-11 12:00:00") # Start date...
 
 # Settings for batch processing
 frame_skip = 25  # Process every 25th frame
-batch_size = 64  # Send 64 frames at a time to the GPU
+batch_size = 32  # Send 32 frames at a time to the GPU
 
 
 # Load a pretrained YOLO model
-modelpath = Path("models/auklab_model_nano_v4295.pt")
+modelpath = Path("models/auklab_model_combined_1394.pt")
 model = YOLO(modelpath).to(f'cuda:{device}')
 modelname = modelpath.stem
-#output_dir1 = f'../../../../../../mnt/BSP_NAS2_work/auklab_model/inference/2024/{modelname}/'
-output_dir1 = f'../../../../../../mnt/BSP_NAS2_work/auklab_model/inference/2024/test/'
+output_dir1 = f'../../../../../../mnt/BSP_NAS2_work/auklab_model/inference/2024/{modelname}/'
 
 if os.path.exists(output_dir1) == False:
     os.makedirs(output_dir1)
@@ -67,7 +66,7 @@ for vid in vids:
         starttime_u = starttime.timestamp()
         fps = 25
 
-        outname = output_dir2+"/"+vid.stem+"_64_raw.csv"
+        outname = output_dir2+"/"+vid.stem+"_raw.csv"
 
         # Check that file has not been processed already 
 
@@ -134,4 +133,4 @@ now = pd.to_datetime("now").strftime("%Y-%m-%d %H:%M:%S")
 
 
 # Run example 
-# python3 code/model/run_inference.py 1 "EJDER4"
+# python3 code/model/run_inference_nth_decode.py 1 "FAR3"

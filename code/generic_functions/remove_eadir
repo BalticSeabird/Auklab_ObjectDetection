@@ -1,0 +1,7 @@
+# Bash
+
+#Without delete (inside folder)
+find . -type d -name "@eaDir"
+
+# Delete
+find . -type d -name "@eaDir" -prune -exec rm -rf {} +
