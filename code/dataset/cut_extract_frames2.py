@@ -82,11 +82,12 @@ def main():
     
     start = "00:"+input("Start time (min:sec): ")
     end = "00:"+input("End time (min:sec): ")
+    freq = int(input("Frame frequency (every n-th frame): "))
     savename = videoname + "_" + start.replace(":", "") + "_" + end.replace(":", "") + ".mp4"
     savepath = savepath + savename
 
     trim_video_ffmpeg(filename, savepath, start, end)
-    #save_frames(videoname, "/Users/jonas/Downloads/ims/", freq)
+    save_frames(savepath, "/Users/jonas/Downloads/ims/", freq)
 
 
 if __name__ == "__main__":
