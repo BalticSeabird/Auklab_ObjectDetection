@@ -10,7 +10,7 @@ source_folder = Path("../../../../../mnt/BSP_NAS2/Software_Models/seabird_fish/a
 
 
 # Destination base folder
-dest_base = 'dataset/seabird_fish1394'
+dest_base = 'dataset/seabird_fish1978'
 splits = ['train', 'val', 'test']
 split_ratios = [0.8, 0.1, 0.1]
 
@@ -22,7 +22,11 @@ for split in splits:
 # Collect all image-label pairs
 image_label_pairs = []
 longpath = source_folder
-image_files = longpath.rglob('*.jpg')
+
+image_files = []
+for ext in ("*.jpg", "*.jpeg", "*.png", "*.JPG", "*.JPEG", "*.PNG"):
+    image_files.extend(longpath.rglob(ext))
+
 for img_path in image_files:
     img_name = Path(img_path).stem
     label_path = os.path.join(longpath, 'labels', img_name + '.txt')

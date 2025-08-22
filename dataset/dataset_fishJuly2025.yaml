@@ -1,6 +1,0 @@
-names:
-- fish
-nc: 1
-train: ../../../../../../../mnt/BSP_NAS2_work/fish_model/annotations/train
-val: ../../../../../../../mnt/BSP_NAS2_work/fish_model/annotations/validate
-test: ../../../../../../../mnt/BSP_NAS2_work/fish_model/annotations/test
