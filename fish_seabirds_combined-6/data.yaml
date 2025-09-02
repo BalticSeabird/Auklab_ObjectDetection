@@ -1,0 +1,13 @@
+train: ../train/images
+val: ../valid/images
+test: ../test/images
+
+nc: 3
+names: ['Adult', 'Chick', 'Fish']
+
+roboflow:
+  workspace: ai-course-2024
+  project: fish_seabirds_combined-625bd
+  version: 6
+  license: CC BY 4.0
+  url: https://universe.roboflow.com/ai-course-2024/fish_seabirds_combined-625bd/dataset/6

@@ -1,0 +1,6 @@
+train: seabird_fish2206/images/train
+val: seabird_fish2206/images/val
+test: seabird_fish2206/images/test
+
+nc: 3
+names: ['adult', 'chick', 'fish']
