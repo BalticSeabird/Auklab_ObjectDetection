@@ -38,8 +38,8 @@ def annotate_with_yolo(model_path, image_dir, output_dir, conf=0.25):
 
 # Example usage
 annotate_with_yolo(
-    model_path="models/auklab_combined_v1978_v1.pt",
-    image_dir="../../../../Downloads/ims/",     # folder with unlabeled images
-    output_dir="../../../../Downloads/labels",    # where .txt files will be written
+    model_path="models/auklab_model_large_combined_2206_v1.pt",
+    image_dir="images/",     # folder with unlabeled images
+    output_dir="labels/",    # where .txt files will be written
     conf=0.25
 )
