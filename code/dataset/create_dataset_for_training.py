@@ -4,11 +4,11 @@ import random
 from pathlib import Path
 
 # Source base folder
-source_base = Path("fish_seabirds_combined-6")
+source_base = Path("fish_seabirds_combined-7")
 source_splits = ['train', 'valid', 'test']
 
 # Destination base folder
-dest_base = Path("dataset/seabird_fish2206")
+dest_base = Path("dataset/seabird_fish3495")
 dest_splits = ['train', 'val', 'test']
 split_ratios = [0.8, 0.1, 0.1]
 
