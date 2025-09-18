@@ -1,0 +1,8 @@
+train: seabird_fish4564/images/train
+val: seabird_fish4564/images/val
+test: seabird_fish4564/images/test
+nc: 3
+names:
+- adult
+- chick
+- fish

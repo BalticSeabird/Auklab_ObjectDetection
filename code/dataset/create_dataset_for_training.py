@@ -1,14 +1,17 @@
-import os
+import yaml
 import shutil
 import random
 from pathlib import Path
 
+base = input("Enter roboflow dataset version number (e.g., 9): ").strip()
+ds_version = input("Enter dataset version (e.g., 4564): ").strip()
+
 # Source base folder
-source_base = Path("fish_seabirds_combined-8")
+source_base = Path(f"fish_seabirds_combined-{base}")
 source_splits = ['train', 'valid', 'test']
 
 # Destination base folder
-dest_base = Path("dataset/seabird_fish4211")
+dest_base = Path(f"dataset/seabird_fish{ds_version}")
 dest_splits = ['train', 'val', 'test']
 split_ratios = [0.8, 0.1, 0.1]
 
@@ -68,3 +71,19 @@ for split, pairs in splits_data.items():
         shutil.copyfile(lbl_src, lbl_dest)
 
 print(f"✅ Dataset prepared under '{dest_base}' with {len(image_label_pairs)} samples.")
+
+
+
+# Create yaml file for YOLO training based on template
+data = {
+    "train": f"seabird_fish{ds_version}/images/train",
+    "val": f"seabird_fish{ds_version}/images/val",
+    "test": f"seabird_fish{ds_version}/images/test",
+    "nc": 3,
+    "names": ["adult", "chick", "fish"]
+}
+
+# Save to YAML file
+with open(f"dataset/dataset_combined_{ds_version}.yaml", "w") as f:
+    yaml.dump(data, f, default_flow_style=False, sort_keys=False)
+

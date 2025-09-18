@@ -8,6 +8,6 @@ names: ['Adult', 'Chick', 'Fish']
 roboflow:
   workspace: ai-course-2024
   project: fish_seabirds_combined-625bd
-  version: 8
+  version: 9
   license: CC BY 4.0
-  url: https://universe.roboflow.com/ai-course-2024/fish_seabirds_combined-625bd/dataset/8
+  url: https://universe.roboflow.com/ai-course-2024/fish_seabirds_combined-625bd/dataset/9

@@ -4,10 +4,7 @@ from ultralytics import YOLO
 import os 
 import sys
 sys.path.append("/home/jonas/Documents/vscode/Eider_detection/code/generic_functions/") # Sprattus
-from functions import send_email
-import cv2
-import torch
-import av
+#from functions import send_email
 
 # Input arguments (run device and station)
 device = sys.argv[1]
@@ -26,7 +23,7 @@ batch_size = 32  # Send 32 frames at a time to the GPU
 
 
 # Load a pretrained YOLO model
-modelpath = Path("models/auklab_model_combined_1394.pt")
+modelpath = Path("models/auklab_model_combined_xlarge_4211_v1.pt")
 model = YOLO(modelpath).to(f'cuda:{device}')
 modelname = modelpath.stem
 output_dir1 = f'../../../../../../mnt/BSP_NAS2_work/auklab_model/inference/2024/{modelname}/'
