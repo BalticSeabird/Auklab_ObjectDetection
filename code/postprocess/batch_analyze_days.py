@@ -6,14 +6,30 @@ Batch processing script to analyze seabird behavior across multiple days.
 Groups CSV files by date, processes each day separately, and generates daily summary reports.
 
 Usage:
-    python3 code/postprocess/batch_analyze_days.py data/od_data/ --output_dir daily_analysis/
+    python3 code/postprocess/batch_analyze_days.py data/od_data/ --station FAR3 --output_dir daily_analysis/
     
 Features:
 - Automatically groups files by date from filename timestamps
+- Organizes output by station and date: daily_analysis/[station]/[date]/
 - Processes all files for each day together
 - Generates daily summary reports, plots, and aggregated CSV files
 - Handles multiple observation periods per day
 - Creates comparative analysis across days
+
+Output Structure:
+    daily_analysis/
+        FAR3/
+            20250630/
+                daily_summary_20250630.txt
+                csv/
+                    daily_events_20250630.csv
+                    daily_per_second_20250630.csv
+                    ...
+                plots/
+                    daily_overview_20250630.png
+        FAR1/
+            20250701/
+                ...
 """
 
 import argparse
@@ -361,10 +377,17 @@ def plot_daily_overview(combined_data, output_dir, date_str):
         ax2.set_ylim(0, 1.5)
         ax2.set_yticks([0.5, 1])
         ax2.set_yticklabels(['Departure', 'Arrival'])
+        
+        # Set x-axis to always show full 24 hours (00:00 to 23:59)
+        if combined_data['date']:
+            start_of_day = pd.Timestamp(combined_data['date'])
+            end_of_day = start_of_day + pd.Timedelta(days=1)
+            ax2.set_xlim(start_of_day, end_of_day)
+        
         ax2.legend()
         ax2.grid(True, alpha=0.3)
         ax2.xaxis.set_major_formatter(mdates.DateFormatter('%H:%M'))
-        ax2.xaxis.set_major_locator(mdates.HourLocator(interval=1))
+        ax2.xaxis.set_major_locator(mdates.HourLocator(interval=2))
         ax2.tick_params(axis='x', rotation=45)
     
     # Activity by observation period (second row)
@@ -386,38 +409,106 @@ def plot_daily_overview(combined_data, output_dir, date_str):
         ax3.set_ylabel('Adult Count')
         ax3.set_xlabel('Time of Day')
         ax3.set_title('Adult Activity Across All Observation Periods')
+        
+        # Set x-axis to always show full 24 hours (00:00 to 23:59)
+        if combined_data['date']:
+            start_of_day = pd.Timestamp(combined_data['date'])
+            end_of_day = start_of_day + pd.Timedelta(days=1)
+            ax3.set_xlim(start_of_day, end_of_day)
+        
         ax3.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
         ax3.grid(True, alpha=0.3)
         ax3.xaxis.set_major_formatter(mdates.DateFormatter('%H:%M'))
-        ax3.xaxis.set_major_locator(mdates.HourLocator(interval=1))
+        ax3.xaxis.set_major_locator(mdates.HourLocator(interval=2))
         ax3.tick_params(axis='x', rotation=45)
     
-    # Events per observation period (bottom left)
+    # Flapping rate and fish arrivals timeline (bottom left)
     ax4 = fig.add_subplot(gs[2, 0])
-    if not combined_data['events_df'].empty:
+    
+    # Create a secondary y-axis for flapping rate
+    ax4_twin = ax4.twinx()
+    
+    # Plot flapping rate as rolling mean (plot first, lower z-order)
+    if not combined_data['flaps_df'].empty and 'absolute_timestamp' in combined_data['flaps_df'].columns:
+        flaps = combined_data['flaps_df'].copy()
+        flaps['timestamp'] = pd.to_datetime(flaps['absolute_timestamp'])
+        
+        # Create full day time range with 1-minute resolution
+        if combined_data['date']:
+            start_of_day = pd.Timestamp(combined_data['date'])
+            end_of_day = start_of_day + pd.Timedelta(days=1)
+            time_range = pd.date_range(start=start_of_day, end=end_of_day, freq='1min')
+            
+            # Count flapping events per minute
+            flaps_per_min = flaps.groupby(pd.Grouper(key='timestamp', freq='1min')).size()
+            flaps_per_min = flaps_per_min.reindex(time_range, fill_value=0)
+            
+            # Apply rolling mean (5-minute window)
+            rolling_window = 5
+            flaps_rolling = flaps_per_min.rolling(window=rolling_window, center=True, min_periods=1).mean()
+            
+            # Plot on secondary axis with lower z-order
+            ax4_twin.plot(flaps_rolling.index, flaps_rolling.values, color='purple', 
+                         linewidth=2, alpha=0.8, label=f'Flapping Rate (5-min avg)', zorder=1)
+            ax4_twin.set_ylabel('Flapping Events per Minute', color='purple')
+            ax4_twin.tick_params(axis='y', labelcolor='purple')
+            ax4_twin.set_xlim(start_of_day, end_of_day)
+    
+    # Set twin axis to be behind primary axis
+    ax4_twin.set_zorder(1)
+    ax4.set_zorder(2)
+    # Make primary axis background transparent so twin axis is visible
+    ax4.patch.set_visible(False)
+    
+    # Plot fish arrivals on primary axis (higher z-order so they appear on top)
+    if not combined_data['events_df'].empty and 'absolute_timestamp' in combined_data['events_df'].columns:
         events = combined_data['events_df']
-        event_counts = events['observation_period'].value_counts()
+        arrivals = events[events['type'] == 'arrival']
         
-        # Truncate long filenames for display
-        display_names = [name.replace('FAR3_', '').replace('_raw.csv', '') for name in event_counts.index]
+        if 'arrival_with_fish' in arrivals.columns:
+            fish_arrivals = arrivals[arrivals['arrival_with_fish'] == True]
+            if not fish_arrivals.empty:
+                fish_times = pd.to_datetime(fish_arrivals['absolute_timestamp'])
+                ax4.scatter(fish_times, [1]*len(fish_arrivals), c='orange', s=150, 
+                           alpha=0.9, label=f'Fish Arrivals ({len(fish_arrivals)})', 
+                           marker='*', edgecolors='darkgoldenrod', linewidths=1.5, zorder=10)
         
-        bars = ax4.bar(range(len(event_counts)), event_counts.values, alpha=0.7)
-        ax4.set_xlabel('Observation Period')
-        ax4.set_ylabel('Number of Events')
-        ax4.set_title('Events per Observation Period')
-        ax4.set_xticks(range(len(event_counts)))
-        ax4.set_xticklabels(display_names, rotation=45, ha='right')
-        ax4.grid(True, alpha=0.3)
+        ax4.set_ylabel('Fish Arrivals', color='orange')
+        ax4.set_ylim(0, 2)
+        ax4.set_yticks([1])
+        ax4.set_yticklabels([''])
+        ax4.tick_params(axis='y', labelcolor='orange')
+        
+        # Set x-axis to always show full 24 hours
+        if combined_data['date']:
+            start_of_day = pd.Timestamp(combined_data['date'])
+            end_of_day = start_of_day + pd.Timedelta(days=1)
+            ax4.set_xlim(start_of_day, end_of_day)
+    
+    ax4.set_xlabel('Time of Day')
+    ax4.set_title('Flapping Rate and Fish Arrivals Timeline')
+    ax4.grid(True, alpha=0.3)
+    ax4.xaxis.set_major_formatter(mdates.DateFormatter('%H:%M'))
+    ax4.xaxis.set_major_locator(mdates.HourLocator(interval=2))
+    ax4.tick_params(axis='x', rotation=45)
+    
+    # Combine legends from both axes (flapping first, then fish)
+    lines2, labels2 = ax4_twin.get_legend_handles_labels()
+    lines1, labels1 = ax4.get_legend_handles_labels()
+    ax4.legend(lines2 + lines1, labels2 + labels1, loc='upper left')
     
     # Flapping events spatial distribution (bottom middle)
     ax5 = fig.add_subplot(gs[2, 1])
     if not combined_data['flaps_df'].empty:
         flaps = combined_data['flaps_df']
+        # Plot with regular coordinates
         scatter = ax5.scatter(flaps['center_x'], flaps['center_y'], 
                             c=flaps['multiplier'], s=60, alpha=0.7, cmap='plasma')
         ax5.set_xlabel('X Position')
         ax5.set_ylabel('Y Position')
         ax5.set_title('Flapping Event Locations')
+        # Invert y-axis so higher values (top of image) are at top of plot
+        ax5.invert_yaxis()
         plt.colorbar(scatter, ax=ax5, label='Area Multiplier')
     
     # Activity distribution (bottom right)
@@ -468,6 +559,8 @@ def plot_daily_overview(combined_data, output_dir, date_str):
 def main():
     parser = argparse.ArgumentParser(description='Batch analyze seabird behavior across multiple days')
     parser.add_argument('input_dir', help='Directory containing CSV files')
+    parser.add_argument('--station', '-s', required=True,
+                       help='Station name (e.g., FAR3, FAR1, etc.)')
     parser.add_argument('--output_dir', '-o', default='daily_analysis/', 
                        help='Output directory for daily analysis results')
     parser.add_argument('--fps', type=int, default=1, help='Sampling rate (samples per second)')
@@ -497,20 +590,22 @@ def main():
     
     # Group files by date
     date_groups = group_files_by_date(csv_files)
-    print(f"Processing {len(date_groups)} days:")
+    print(f"Processing {len(date_groups)} days for station {args.station}:")
     for date, files in date_groups.items():
         print(f"  {date}: {len(files)} files")
     
-    # Create output directory
-    os.makedirs(args.output_dir, exist_ok=True)
+    # Create output directory with station subfolder
+    station_output_dir = os.path.join(args.output_dir, args.station)
+    os.makedirs(station_output_dir, exist_ok=True)
+    print(f"Output will be saved to: {station_output_dir}")
     
     # Process each day
     for date, files in date_groups.items():
         date_str = date.strftime('%Y%m%d')
-        print(f"\nProcessing {date_str}...")
+        print(f"\nProcessing {args.station} - {date_str}...")
         
-        # Create daily output directory
-        daily_output_dir = os.path.join(args.output_dir, date_str)
+        # Create daily output directory under station folder
+        daily_output_dir = os.path.join(station_output_dir, date_str)
         os.makedirs(daily_output_dir, exist_ok=True)
         
         # Process all files for this day
@@ -571,9 +666,10 @@ def main():
         plot_daily_overview(combined_data, plots_output_dir, date_str)
         print(f"Generated daily overview plot: {plots_output_dir}/daily_overview_{date_str}.png")
         
-        print(f"Completed {date_str}: {len(daily_results)} observation periods processed")
+        print(f"Completed {args.station} - {date_str}: {len(daily_results)} observation periods processed")
     
-    print(f"\nBatch processing complete! Results saved to {args.output_dir}")
+    print(f"\nBatch processing complete for station {args.station}!")
+    print(f"Results saved to {station_output_dir}")
 
 if __name__ == "__main__":
     main()

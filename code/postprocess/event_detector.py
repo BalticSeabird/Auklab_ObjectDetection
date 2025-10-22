@@ -185,8 +185,6 @@ def aggregate_per_second(df, fps, classes=('adult','chick','fish'), original_vid
         per_sec_df['timestamp'] = timestamps
     
     #per_sec_df.fillna(0, inplace=False)  # we may want NaNs preserved for some metrics; keep as-is for now
-    print(per_sec_df.head())
-    print(per_sec_df.iloc[0])
     return per_sec_df, positions, areas, counts
 
 # --------------------------
