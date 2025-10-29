@@ -26,7 +26,7 @@ batch_size = 32  # Send 32 frames at a time to the GPU
 modelpath = Path("models/auklab_model_combined_xlarge_4211_v1.pt")
 model = YOLO(modelpath).to(f'cuda:{device}')
 modelname = modelpath.stem
-output_dir1 = f'../../../../../../mnt/BSP_NAS2_work/auklab_model/inference/2024/{modelname}/'
+output_dir1 = f'../../../../../../mnt/BSP_NAS2_work/auklab_model/inference/2025/{modelname}/'
 
 if os.path.exists(output_dir1) == False:
     os.makedirs(output_dir1)
@@ -38,7 +38,7 @@ if os.path.exists(output_dir2) == False:
     os.makedirs(output_dir2)
 
 # Define input video path
-base_path = Path(f"../../../../../../mnt/BSP_NAS2_vol3/Video/Video2024/{stat}")
+base_path = Path(f"../../../../../../mnt/BSP_NAS2_vol4/Video/Video2025/{stat}")
 vids = list(base_path.rglob("*.mp4"))
 vids.sort()
 
