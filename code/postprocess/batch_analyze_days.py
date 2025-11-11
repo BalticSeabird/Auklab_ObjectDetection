@@ -7,7 +7,7 @@ Groups CSV files by date, processes each day separately, and generates daily sum
 
 Usage:
     prod python3 code/postprocess/batch_analyze_days.py ../../../../../../mnt/BSP_NAS2_work/auklab_model/inference/2025/auklab_model_xlarge_combined_4564_v1/1FPS/TRI3/2025-06-28 --station TRI3 --output_dir ../../../../../../mnt/BSP_NAS2_work/auklab_model/summarized_inference/2025/
-    dev python3 code/postprocess/batch_analyze_days.py ../../../../../../mnt/BSP_NAS2_work/auklab_model/inference/2025/auklab_model_xlarge_combined_4564_v1/TRI3/2025-06-28 --station TRI3 --output_dir dump/summarized_inference/2025/
+    dev python3 code/postprocess/batch_analyze_days.py csv_detection_1fps/ --station TRI3 --output_dir dump/summarized_inference/
     
 Features:
 - Automatically groups files by date from filename timestamps
@@ -396,16 +396,15 @@ def plot_daily_overview(combined_data, output_dir, date_str):
     if not combined_data['per_second_df'].empty:
         per_sec = combined_data['per_second_df']
         
-        # Plot activity for each observation period
+        # Plot activity for each observation period with single color
         periods = per_sec['observation_period'].unique()
-        colors = plt.cm.Set3(np.linspace(0, 1, len(periods)))
         
-        for i, period in enumerate(periods):
+        for period in periods:
             period_data = per_sec[per_sec['observation_period'] == period]
             if 'timestamp' in period_data.columns:
                 x_data = pd.to_datetime(period_data['timestamp'])
-                ax3.plot(x_data, period_data['count_adult'], color=colors[i], 
-                        label=period.replace('_raw.csv', ''), linewidth=1.5, alpha=0.8)
+                ax3.plot(x_data, period_data['count_adult'], color='steelblue', 
+                        linewidth=1.5, alpha=0.7)
         
         ax3.set_ylabel('Adult Count')
         ax3.set_xlabel('Time of Day')
@@ -417,7 +416,6 @@ def plot_daily_overview(combined_data, output_dir, date_str):
             end_of_day = start_of_day + pd.Timedelta(days=1)
             ax3.set_xlim(start_of_day, end_of_day)
         
-        ax3.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
         ax3.grid(True, alpha=0.3)
         ax3.xaxis.set_major_formatter(mdates.DateFormatter('%H:%M'))
         ax3.xaxis.set_major_locator(mdates.HourLocator(interval=2))

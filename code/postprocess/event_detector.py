@@ -75,7 +75,40 @@ def frames_to_timestamps(frames, fps, original_video_fps=25, start_time=None):
         return seconds
 
 
-def load_detections(csv_path, conf_thresh=0.25):
+def filter_edge_detections(df, frame_width=2688, frame_height=1520, edge_margin=50):
+    """
+    Remove detections that touch or are very close to frame edges.
+    These often cause flickering (detected/not detected) as objects move in/out of frame.
+    
+    Args:
+        df: DataFrame with xmin, ymin, xmax, ymax columns
+        frame_width: Width of video frame in pixels
+        frame_height: Height of video frame in pixels  
+        edge_margin: Pixel distance from edge to consider as "edge detection"
+    
+    Returns:
+        DataFrame with edge detections removed
+    """
+    if len(df) == 0:
+        return df
+    
+    # Filter out detections touching edges
+    mask = (
+        (df['xmin'] >= edge_margin) &
+        (df['xmax'] <= frame_width - edge_margin) &
+        (df['ymin'] >= edge_margin) &
+        (df['ymax'] <= frame_height - edge_margin)
+    )
+    
+    filtered_df = df[mask].copy()
+    
+    removed_count = len(df) - len(filtered_df)
+    if removed_count > 0:
+        print(f"  Removed {removed_count} edge detections (within {edge_margin}px of frame borders)")
+    
+    return filtered_df
+
+def load_detections(csv_path, conf_thresh=0.25, filter_edges=True, frame_width=2688, frame_height=1520, edge_margin=50):
     df = pd.read_csv(csv_path)
     # ensure numeric columns
     for c in ['frame','confidence','xmin','ymin','xmax','ymax']:
@@ -85,6 +118,10 @@ def load_detections(csv_path, conf_thresh=0.25):
     df = df[df['confidence'] >= conf_thresh].copy()
     df['frame'] = df['frame'].astype(int)
     df.reset_index(drop=True, inplace=True)
+    
+    # Filter edge detections if requested
+    if filter_edges:
+        df = filter_edge_detections(df, frame_width, frame_height, edge_margin)
     
     # Extract start time from filename
     start_time = extract_timestamp_from_filename(csv_path)
@@ -204,13 +241,14 @@ def detect_arrivals_departures(per_sec_df,
       - smooth counts with moving average over smooth_window_s
       - evaluate step changes by comparing average in [t-error_window_s, t-1] vs [t, t+hold_seconds-1]
       - an arrival is when mean_after - mean_before >= min_count_step and mean_after >= 1
-      - departure is when mean_before - mean_after >= min_count_step and mean_after == 0 (or less by step)
-      - we advance t past the hold interval when a change is detected to avoid double counting.
+      - departure is when mean_before - mean_after >= min_count_step and mean_after drops significantly
+      - For multiple arrivals in quick succession, we continue scanning within hold window
+      - Arrival timestamp refined to actual moment of count increase
 
     Returns:
       events: list of dicts with keys:
         - type: 'arrival' or 'departure'
-        - second: int (timestamp second for the event, chosen as start of hold window)
+        - second: int (timestamp second for the event, refined to actual increase)
         - before_mean, after_mean
     """
     counts = per_sec_df[f'count_{target_class}'].to_numpy()
@@ -223,6 +261,7 @@ def detect_arrivals_departures(per_sec_df,
 
     events = []
     t = 0
+    
     while t < n:
         start_before = max(0, t - error_window_s)
         end_before = t  # exclusive
@@ -237,17 +276,65 @@ def detect_arrivals_departures(per_sec_df,
 
         delta = mean_after - mean_before
 
-        # arrival
+        # arrival detection
+        # Lower threshold slightly to 0.8 to catch single-bird arrivals with brief detection gaps
         # Only allow arrival detection if the before window is not at the very start
-        if (delta >= min_count_step) and (mean_after >= 1.0) and (start_before > 0):
-            events.append({'type':'arrival', 'second': t, 'before_mean': float(mean_before), 'after_mean': float(mean_after)})
-            t = end_after  # skip to end of hold to avoid repeated detection
-            continue
+        if (delta >= 0.8) and (mean_after >= 1.0) and (start_before > 0):
+            # Refine timestamp: find the actual moment of count increase within [t, end_after)
+            # Look for the first significant jump in raw counts that is SUSTAINED
+            arrival_second = t
+            found_sustained_arrival = False
+            
+            for i in range(t, min(end_after, n)):
+                # Check if there's a clear step up at position i
+                if i > 0 and counts[i] > counts[i-1]:
+                    # Verify this is a sustained increase, not just noise
+                    # Look ahead to ensure count stays elevated for at least 2-3 seconds
+                    sustain_window = min(3, n - i)
+                    if sustain_window >= 2:
+                        count_after = counts[i:i+sustain_window]
+                        # Count is sustained if it doesn't immediately drop back
+                        # More tolerant: allow 1 brief dip in a 3-second window
+                        # Require at least 60% of samples to be >= current level
+                        sustained_count = sum(count_after >= counts[i])
+                        if sustained_count >= max(1, sustain_window * 0.6):
+                            arrival_second = i
+                            found_sustained_arrival = True
+                            break
+            
+            # Only record arrival if we found a sustained increase
+            if found_sustained_arrival:
+                # Additional robustness check: verify this isn't just recovering from a brief dip
+                # Look back 2-3 seconds to see if count was already at this level
+                lookback_start = max(0, arrival_second - 3)
+                counts_before_arrival = counts[lookback_start:arrival_second]
+                new_count = counts[arrival_second]
+                
+                # Only accept if new count is genuinely higher than recent history
+                # (not just recovering from a 1-second missed detection)
+                if len(counts_before_arrival) == 0 or new_count > counts_before_arrival.max():
+                    events.append({'type':'arrival', 'second': arrival_second, 'before_mean': float(mean_before), 'after_mean': float(mean_after)})
+                    
+                    # Instead of jumping to end_after, advance more conservatively to catch multiple arrivals
+                    # Move to just past the detected arrival to allow subsequent arrivals
+                    t = arrival_second + 2  # Small skip to avoid re-detecting same event
+                    continue
 
         # departure (count drop)
         if (mean_before - mean_after >= min_count_step) and (mean_after <= max(0.5, mean_before - min_count_step)):
-            events.append({'type':'departure', 'second': t, 'before_mean': float(mean_before), 'after_mean': float(mean_after)})
-            t = end_after
+            # Refine timestamp: find actual moment of count decrease
+            departure_second = t
+            for i in range(t, min(end_after, n)):
+                # Check if there's a clear step down at position i
+                if i > 0 and i < n - 1:
+                    before_local = max(0, i - 2)
+                    after_local = min(n, i + 2)
+                    if counts[i] < counts[before_local:i].mean() - 0.5:
+                        departure_second = i
+                        break
+            
+            events.append({'type':'departure', 'second': departure_second, 'before_mean': float(mean_before), 'after_mean': float(mean_after)})
+            t = departure_second + 2  # Conservative skip
             continue
 
         t += 1
@@ -547,10 +634,15 @@ def run_pipeline(csv_path,
                  movement_smoothing_s=5,
                  flap_area_multiplier=3.0,
                  flap_baseline_s=30,
-                 original_video_fps=25):
+                 original_video_fps=25,
+                 filter_edges=True,
+                 frame_width=2688,
+                 frame_height=1520,
+                 edge_margin=50):
     os.makedirs(os.path.dirname(out_prefix) or ".", exist_ok=True)
 
-    df, start_time = load_detections(csv_path, conf_thresh=conf_thresh)
+    df, start_time = load_detections(csv_path, conf_thresh=conf_thresh, filter_edges=filter_edges, 
+                                     frame_width=frame_width, frame_height=frame_height, edge_margin=edge_margin)
     print(f"Loaded {len(df)} detections")
 
     per_sec_df, positions, areas, counts = aggregate_per_second(df, fps, classes=('adult','chick','fish'), original_video_fps=original_video_fps, start_time=start_time)
