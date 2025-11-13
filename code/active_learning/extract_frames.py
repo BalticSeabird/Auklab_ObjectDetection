@@ -70,7 +70,8 @@ class FrameExtractor:
             'spike': [],
             'dip': [],
             'high_count': [],
-            'count_transition': []
+            'count_transition': [],
+            'fish': []
         }
         
         for video_problems in all_problems:
@@ -116,6 +117,15 @@ class FrameExtractor:
             # Transitions
             for frame_info in video_problems['count_transition_frames']:
                 frames_by_type['count_transition'].append({
+                    'video_file': video_file,
+                    'second': frame_info['second'],
+                    'timestamp': (start_time + timedelta(seconds=frame_info['second'])).isoformat(),
+                    'details': frame_info
+                })
+            
+            # Fish detections
+            for frame_info in video_problems.get('fish_frames', []):
+                frames_by_type['fish'].append({
                     'video_file': video_file,
                     'second': frame_info['second'],
                     'timestamp': (start_time + timedelta(seconds=frame_info['second'])).isoformat(),

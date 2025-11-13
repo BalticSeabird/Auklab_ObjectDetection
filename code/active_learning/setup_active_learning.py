@@ -1,0 +1,257 @@
+#!/usr/bin/env python3
+"""
+Interactive setup helper for the Active Learning Pipeline.
+Helps you create a custom configuration file with your paths.
+
+Usage:
+    python setup_active_learning.py
+"""
+
+import sys
+from pathlib import Path
+
+
+def get_user_input(prompt, default=None):
+    """Get input from user with optional default."""
+    if default:
+        prompt = f"{prompt} [{default}]: "
+    else:
+        prompt = f"{prompt}: "
+    
+    response = input(prompt).strip()
+    return response if response else default
+
+
+def validate_path(path_str, must_exist=True):
+    """Validate that a path exists."""
+    if not path_str:
+        return False
+    
+    path = Path(path_str)
+    if must_exist and not path.exists():
+        print(f"  ⚠ Warning: Path does not exist: {path}")
+        return False
+    return True
+
+
+def main():
+    print("="*80)
+    print("ACTIVE LEARNING PIPELINE - INTERACTIVE SETUP")
+    print("="*80)
+    print()
+    print("This script will help you create a configuration file for the")
+    print("active learning pipeline. You'll need to provide paths to:")
+    print("  1. CSV detection outputs from your object detection model")
+    print("  2. Original video files")
+    print("  3. Your trained YOLO model")
+    print()
+    print("Press Ctrl+C at any time to cancel.")
+    print()
+    
+    try:
+        # Get CSV directory
+        print("-" * 80)
+        print("1. CSV DETECTION OUTPUTS")
+        print("-" * 80)
+        print("Where are your CSV detection files located?")
+        print("(The directory containing *_raw.csv files)")
+        print()
+        
+        csv_dir = None
+        while not csv_dir:
+            csv_dir = get_user_input("CSV directory", "csv_detection_1fps")
+            if csv_dir and not validate_path(csv_dir, must_exist=True):
+                retry = get_user_input("Path not found. Continue anyway? (y/n)", "n")
+                if retry.lower() != 'y':
+                    csv_dir = None
+        
+        # Get video directories
+        print()
+        print("-" * 80)
+        print("2. VIDEO FILES")
+        print("-" * 80)
+        print("Where are your video files located?")
+        print("(You can specify multiple directories, one per line)")
+        print("(Leave blank and press Enter when done)")
+        print()
+        
+        video_dirs = []
+        i = 1
+        while True:
+            video_dir = get_user_input(f"Video directory {i}", "video" if i == 1 else "")
+            if not video_dir:
+                break
+            
+            if validate_path(video_dir, must_exist=True) or \
+               get_user_input("Path not found. Add anyway? (y/n)", "n").lower() == 'y':
+                video_dirs.append(video_dir)
+                i += 1
+        
+        if not video_dirs:
+            print("  ℹ No video directories specified. Using default: video/")
+            video_dirs = ["video"]
+        
+        # Get output directory
+        print()
+        print("-" * 80)
+        print("3. OUTPUT DIRECTORY")
+        print("-" * 80)
+        print("Where should results be saved?")
+        print()
+        
+        output_dir = get_user_input("Output directory", "data/active_learning_batch")
+        
+        # Get model path
+        print()
+        print("-" * 80)
+        print("4. YOLO MODEL")
+        print("-" * 80)
+        print("Path to your trained YOLO model (.pt file)")
+        print()
+        
+        model_path = None
+        while not model_path:
+            model_path = get_user_input("Model path", "models/auklab_model_xlarge_combined_4564_v1.pt")
+            if model_path and not validate_path(model_path, must_exist=True):
+                retry = get_user_input("Model not found. Continue anyway? (y/n)", "n")
+                if retry.lower() != 'y':
+                    model_path = None
+        
+        # Get sampling settings
+        print()
+        print("-" * 80)
+        print("5. SAMPLING SETTINGS")
+        print("-" * 80)
+        print("For large datasets, you can randomly sample a subset of files.")
+        print()
+        
+        enable_sampling = get_user_input("Enable sampling? (y/n)", "y").lower() == 'y'
+        
+        n_files = None
+        if enable_sampling:
+            n_files_str = get_user_input("Number of files to sample", "100")
+            try:
+                n_files = int(n_files_str)
+            except:
+                print("  ℹ Invalid number, using 100")
+                n_files = 100
+        
+        # Get extraction settings
+        print()
+        print("-" * 80)
+        print("6. FRAME EXTRACTION")
+        print("-" * 80)
+        
+        max_per_type_str = get_user_input("Max frames per problem type", "100")
+        try:
+            max_per_type = int(max_per_type_str)
+        except:
+            max_per_type = 100
+        
+        # Generate config
+        print()
+        print("="*80)
+        print("GENERATING CONFIGURATION")
+        print("="*80)
+        
+        config = f"""# Active Learning Pipeline Configuration
+# Generated by setup_active_learning.py
+
+paths:
+  csv_dir: "{csv_dir}"
+  video_dirs:
+"""
+        for vdir in video_dirs:
+            config += f'    - "{vdir}"\n'
+        
+        config += f"""  output_dir: "{output_dir}"
+
+sampling:
+  enabled: {str(enable_sampling).lower()}
+  n_files: {n_files if n_files else 'null'}
+  random_seed: 42
+  
+  # Optional filters (uncomment and customize as needed)
+  # include_patterns:
+  #   - ".*TRI3.*"      # Only TRI3 station
+  #   - ".*202506.*"    # Only June 2025
+  # exclude_patterns:
+  #   - ".*test.*"      # Skip test files
+
+detection:
+  frame_width: 2688
+  frame_height: 1520
+  confidence_threshold: 0.25
+  edge_margin: 100
+  max_spike_duration: 2
+  max_dip_duration: 3
+  high_count_threshold: 10
+
+extraction:
+  max_per_type: {max_per_type}
+  priority: "diverse"
+  video_extensions:
+    - ".mkv"
+    - ".mp4"
+    - ".avi"
+    - ".mov"
+
+pre_annotation:
+  model_path: "{model_path}"
+  confidence: 0.25
+  enabled: true
+
+processing:
+  n_workers: 4
+  verbose: true
+  save_intermediate: true
+"""
+        
+        # Save config
+        config_path = Path("code/active_learning/my_config.yaml")
+        
+        print(f"\nSaving configuration to: {config_path}")
+        
+        if config_path.exists():
+            overwrite = get_user_input(f"{config_path} already exists. Overwrite? (y/n)", "n")
+            if overwrite.lower() != 'y':
+                config_path = Path(get_user_input("Enter alternative filename", "code/active_learning/my_config_new.yaml"))
+        
+        config_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(config_path, 'w') as f:
+            f.write(config)
+        
+        print(f"✅ Configuration saved to: {config_path}")
+        
+        # Next steps
+        print()
+        print("="*80)
+        print("SETUP COMPLETE!")
+        print("="*80)
+        print()
+        print("Next steps:")
+        print()
+        print(f"1. Review/edit the configuration file:")
+        print(f"   {config_path}")
+        print()
+        print("2. Run the pipeline:")
+        print(f"   python code/active_learning/run_active_learning_pipeline.py --config {config_path}")
+        print()
+        print("3. Or run specific steps:")
+        print(f"   python code/active_learning/run_active_learning_pipeline.py --config {config_path} --steps identify")
+        print()
+        print("See SCALING_GUIDE.md for detailed documentation.")
+        print("="*80)
+        
+    except KeyboardInterrupt:
+        print("\n\n⚠ Setup cancelled by user.")
+        return 1
+    except Exception as e:
+        print(f"\n\n✗ Error during setup: {e}")
+        return 1
+    
+    return 0
+
+
+if __name__ == '__main__':
+    sys.exit(main())

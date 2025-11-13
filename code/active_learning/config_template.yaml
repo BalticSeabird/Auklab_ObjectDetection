@@ -1,0 +1,89 @@
+# Active Learning Pipeline Configuration
+# Copy this to config.yaml and customize for your dataset
+
+# Paths Configuration
+paths:
+  # Directory containing CSV detection outputs from your model
+  # Can contain subdirectories organized by station/date
+  csv_dir: "/path/to/csv_detection_outputs"
+  
+  # Directory (or list of directories) containing original video files
+  # The script will search recursively for matching videos
+  video_dirs:
+    - "/path/to/video_files"
+    # - "/path/to/more/videos"  # Can add multiple directories
+  
+  # Output directory for all results
+  output_dir: "data/active_learning_batch"
+
+# Sampling Configuration
+sampling:
+  # Whether to use sampling (false = process all files)
+  enabled: true
+  
+  # Random sampling strategy
+  strategy: "random"  # Options: "random", "stratified", "all"
+  
+  # Number of CSV files to randomly sample
+  # Set to null or comment out to process all files
+  n_files: 100
+  
+  # Optional: Random seed for reproducibility
+  random_seed: 42
+  
+  # Optional: Filter by patterns (regex)
+  # include_patterns:
+  #   - ".*TRI3.*"  # Only TRI3 station
+  #   - ".*202506.*"  # Only June 2025
+  # exclude_patterns:
+  #   - ".*test.*"  # Exclude test files
+
+# Problem Detection Parameters
+detection:
+  # Frame dimensions (if different from default)
+  frame_width: 2688
+  frame_height: 1520
+  
+  # Detection parameters
+  confidence_threshold: 0.25
+  edge_margin: 100  # pixels from border
+  max_spike_duration: 2  # seconds
+  max_dip_duration: 3  # seconds
+  high_count_threshold: 10  # birds
+
+# Frame Extraction Parameters
+extraction:
+  # Maximum frames to extract per problem type
+  max_per_type: 100
+  
+  # Sampling strategy: "diverse" (spread across videos) or "concentrated" (worst first)
+  priority: "diverse"
+  
+  # Video file extensions to search for
+  video_extensions:
+    - ".mkv"
+    - ".mp4"
+    - ".avi"
+    - ".mov"
+
+# Pre-annotation Parameters
+pre_annotation:
+  # Path to your trained YOLO model
+  model_path: "models/auklab_model_xlarge_combined_4564_v1.pt"
+  
+  # Confidence threshold for pre-annotations (lower = more detections)
+  confidence: 0.25
+  
+  # Whether to run pre-annotation (can disable to just extract frames)
+  enabled: true
+
+# Processing Options
+processing:
+  # Number of parallel workers (for future optimization)
+  n_workers: 4
+  
+  # Whether to show progress bars
+  verbose: true
+  
+  # Whether to save intermediate results
+  save_intermediate: true

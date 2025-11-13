@@ -2,6 +2,23 @@
 
 This workflow helps you identify and annotate problematic frames to improve your object detection model, which will in turn improve event detection.
 
+## 🚀 Quick Start (Large-Scale Pipeline)
+
+**NEW**: For large datasets with random sampling, use the scalable pipeline:
+
+```bash
+# 1. Create your configuration
+cp code/active_learning/config_example.yaml my_config.yaml
+# Edit my_config.yaml with your paths
+
+# 2. Run the full pipeline
+python code/active_learning/run_active_learning_pipeline.py --config my_config.yaml
+```
+
+See **[SCALING_GUIDE.md](SCALING_GUIDE.md)** for complete documentation on the scalable pipeline.
+
+---
+
 ## 🎯 Strategy
 
 The core insight: **Many event detection failures stem from noisy object detections**. By identifying and retraining on problematic frames, you can:
@@ -12,6 +29,10 @@ The core insight: **Many event detection failures stem from noisy object detecti
 4. ✅ Better capture count transitions (critical for event detection)
 
 ## 📋 Workflow
+
+### Original Workflow (Small Scale, Hardcoded Paths)
+
+For the original small-scale workflow, continue below. For **large-scale datasets with random sampling**, see the [Scalable Pipeline](#-quick-start-large-scale-pipeline) above.
 
 ### Step 1: Identify Problematic Frames
 
@@ -29,6 +50,7 @@ This will:
   - **Dip frames**: Sudden count decreases that recover (missed detections)
   - **High count frames**: Scenes with many birds (harder to detect accurately)
   - **Count transitions**: Where bird count changes (critical for events)
+  - **Fish detections**: Frames with fish present (class_id = 2)
 - Save results to `data/problematic_frames.json`
 
 **Expected output:**
@@ -88,21 +110,51 @@ data/frames_for_annotation/
 │   └── ...
 ├── high_count/                # Frames with many birds
 │   └── ...
-└── count_transition/          # Frames where count changes
+├── count_transition/          # Frames where count changes
+│   └── ...
+└── fish/                      # Frames with fish detections
     └── ...
 ```
 
 ### Step 3: Annotate the Frames
 
-Use your preferred annotation tool:
+**Option A: Roboflow** (recommended - automated upload with pre-annotations)
 
-**Option A: Roboflow** (recommended if you're already using it)
-1. Create a new "Active Learning Batch" project or add to existing
-2. Upload frames from `data/frames_for_annotation/`
-3. Annotate birds in each frame
-4. Export in YOLOv8 format
+Upload frames organized by problem type:
+
+```bash
+# Set your API key (once)
+export ROBOFLOW_API_KEY="your_api_key_here"
+
+# Upload all batches with pre-annotations
+python code/active_learning/upload_batches_simple.py \
+    data/frames_for_annotation \
+    --with-annotations
+
+# Or upload specific batches only (e.g., fish and edge detections)
+python code/active_learning/upload_batches_simple.py \
+    data/frames_for_annotation \
+    --batches fish edge_detection
+```
+
+This will:
+- Upload frames organized by problem type (edge_detection, spike, dip, high_count, count_transition, fish)
+- Include pre-annotations from your model (faster than annotating from scratch)
+- Create separate batches in Roboflow for each problem type
+- Tag images by problem type for easy filtering
+
+Then in Roboflow:
+1. Review and correct the pre-annotations
+2. Pay special attention to:
+   - Edge detections: Partial birds at borders
+   - High count frames: Overlapping birds
+   - Fish frames: Fish vs bird classification
+3. Export in YOLOv8 format when done
 
 **Option B: CVAT / Label Studio**
+**Option B: CVAT / Label Studio**
+1. Manually upload frames from `data/frames_for_annotation/`
+2. Import pre-annotations if your tool supports YOLO format
 1. Import frames
 2. Use bounding box tool to annotate birds
 3. Export in YOLO format

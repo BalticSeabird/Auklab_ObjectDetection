@@ -1,0 +1,94 @@
+# Active Learning Pipeline Configuration - Example
+# This is a ready-to-use example configuration
+# Copy and customize for your dataset
+
+paths:
+  # REQUIRED: Where your CSV detection outputs are stored
+  # The script will search RECURSIVELY for all *_raw.csv files
+  # So if you have date subfolders (2025-06-28/, 2025-06-29/, etc.), that's fine!
+  csv_dir: "/mnt/BSP_NAS2_work/auklab_model/inference/2025/auklab_model_xlarge_combined_4564_v1/1FPS/TRI3"
+  
+  # REQUIRED: Where to find video files (can be multiple directories)
+  # The script will search RECURSIVELY in all subdirectories (including date folders)
+  # Example structure: TRI3/2025-06-28/video.mkv, TRI3/2025-06-29/video.mkv, etc.
+  video_dirs:
+    - "/mnt/BSP_NAS2_vol4/Video/Video2025/TRI3"
+    # You can add multiple stations or video sources:
+    # - "/mnt/BSP_NAS2_vol4/Video/Video2025/TRI4"
+  
+  # REQUIRED: Where to save results
+  output_dir: "data/active_learning_batch"
+
+# Sampling configuration
+sampling:
+  # Enable random sampling for large datasets
+  enabled: true
+  
+  # Number of files to randomly sample (null = all files)
+  n_files: 100
+  
+  # Random seed for reproducibility
+  random_seed: 42
+  
+  # Optional: Only include files matching these patterns (regex)
+  # Uncomment and customize as needed:
+  # include_patterns:
+  #   - ".*TRI3.*"      # Only TRI3 station
+  #   - ".*202506.*"    # Only June 2025
+  
+  # Optional: Exclude files matching these patterns
+  # exclude_patterns:
+  #   - ".*test.*"      # Skip test files
+
+# Problem detection parameters
+detection:
+  frame_width: 2688
+  frame_height: 1520
+  confidence_threshold: 0.25
+  edge_margin: 100
+  max_spike_duration: 2
+  max_dip_duration: 3
+  high_count_threshold: 10
+
+# Frame extraction parameters
+extraction:
+  # Maximum frames to extract per problem type
+  max_per_type: 100
+  
+  # Selection strategy:
+  # - "diverse": Spread across different videos (recommended)
+  # - "concentrated": Focus on videos with most problems
+  priority: "diverse"
+  
+  # Video file extensions to search for
+  video_extensions:
+    - ".mkv"
+    - ".mp4"
+    - ".avi"
+    - ".mov"
+  
+  # Enable/disable extraction for specific problem types
+  extract_types:
+    edge_detection: true
+    spike: true
+    dip: true
+    high_count: true
+    count_transition: true
+    fish: true              # Extract frames with fish detections
+
+# Pre-annotation parameters
+pre_annotation:
+  # Path to your YOLO model
+  model_path: "models/auklab_model_xlarge_combined_4564_v1.pt"
+  
+  # Confidence threshold (lower = more detections for review)
+  confidence: 0.25
+  
+  # Enable/disable pre-annotation step
+  enabled: true
+
+# Processing options
+processing:
+  n_workers: 4
+  verbose: true
+  save_intermediate: true

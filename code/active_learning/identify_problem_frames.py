@@ -65,7 +65,8 @@ class ProblemFrameIdentifier:
             'spike_frames': [],
             'dip_frames': [],
             'high_count_frames': [],
-            'count_transition_frames': []
+            'count_transition_frames': [],
+            'fish_frames': []
         }
         
         # 1. Find edge detections
@@ -92,6 +93,11 @@ class ProblemFrameIdentifier:
         transition_frames = self._find_count_transitions(per_sec_df)
         if len(transition_frames) > 0:
             problems['count_transition_frames'] = transition_frames
+        
+        # 6. Find fish detections (class_id = 2)
+        fish_frames = self._find_fish_detections(df)
+        if len(fish_frames) > 0:
+            problems['fish_frames'] = fish_frames
         
         return problems
     
@@ -205,6 +211,28 @@ class ProblemFrameIdentifier:
                 })
         
         return results
+    
+    def _find_fish_detections(self, df):
+        """Find frames with fish detections (class = 'fish')"""
+        # Filter for fish detections only
+        fish_df = df[df['class'] == 'fish'].copy()
+        
+        if len(fish_df) == 0:
+            return []
+        
+        # Group by second and count fish detections
+        fish_df['second'] = fish_df['frame'] // 25
+        fish_by_second = fish_df.groupby('second').size().reset_index(name='fish_count')
+        
+        results = []
+        for _, row in fish_by_second.iterrows():
+            results.append({
+                'second': int(row['second']),
+                'fish_count': int(row['fish_count']),
+                'reason': 'fish'
+            })
+        
+        return results
 
 
 def analyze_directory(csv_dir='csv_detection_1fps', output_file='data/problematic_frames.json'):
@@ -234,7 +262,8 @@ def analyze_directory(csv_dir='csv_detection_1fps', output_file='data/problemati
                 len(problems['spike_frames']) +
                 len(problems['dip_frames']) +
                 len(problems['high_count_frames']) +
-                len(problems['count_transition_frames'])
+                len(problems['count_transition_frames']) +
+                len(problems['fish_frames'])
             )
             
             print(f"✓ Found {total_problems} problematic frames")
@@ -262,6 +291,7 @@ def analyze_directory(csv_dir='csv_detection_1fps', output_file='data/problemati
     total_dips = sum(len(p['dip_frames']) for p in all_problems)
     total_high_count = sum(len(p['high_count_frames']) for p in all_problems)
     total_transitions = sum(len(p['count_transition_frames']) for p in all_problems)
+    total_fish = sum(len(p['fish_frames']) for p in all_problems)
     
     print(f"\nFiles analyzed: {len(csv_files)}")
     print(f"Files with problems: {len(all_problems)}")
@@ -271,7 +301,8 @@ def analyze_directory(csv_dir='csv_detection_1fps', output_file='data/problemati
     print(f"  Dip frames: {total_dips} frames")
     print(f"  High count frames: {total_high_count} frames")
     print(f"  Count transitions: {total_transitions} frames")
-    print(f"\nTotal problematic frames: {total_edge + total_spikes + total_dips + total_high_count + total_transitions}")
+    print(f"  Fish detections: {total_fish} frames")
+    print(f"\nTotal problematic frames: {total_edge + total_spikes + total_dips + total_high_count + total_transitions + total_fish}"))
     
     return all_problems
 

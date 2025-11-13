@@ -31,17 +31,33 @@ python code/active_learning/pre_annotate_frames.py --confidence 0.25
 - `yolo/*.txt` - YOLO format
 - `json/*.json` - Detailed JSON with confidence scores
 
-### 4. Manual Correction (2-4 hours)
-- Upload frames + pre-annotations to Roboflow/CVAT
-- Review and correct errors (faster than annotating from scratch)
-- Pay attention to: edge detections, overlapping birds, partial visibility
-- Export corrected annotations
+### 4. Upload to Roboflow (~5-10 min)
+```bash
+# Set API key (once)
+export ROBOFLOW_API_KEY="your_key_here"
 
-### 5. Retrain Model (4-8 hours)
+# Upload all batches with pre-annotations
+python code/active_learning/upload_batches_simple.py \
+    data/frames_for_annotation --with-annotations
+
+# Or upload specific batches only
+python code/active_learning/upload_batches_simple.py \
+    data/frames_for_annotation \
+    --batches fish edge_detection
+```
+→ Uploads frames organized by problem type as separate batches in Roboflow
+
+### 5. Manual Correction (2-4 hours)
+- Review and correct annotations in Roboflow
+- Pay attention to: edge detections, overlapping birds, partial visibility
+- Each batch is tagged by problem type for easier tracking
+- Export corrected annotations when done
+
+### 6. Retrain Model (4-8 hours)
 - Combine corrected annotations with existing training data
 - Retrain object detection model
 
-### 6. Evaluate (~1-2 hours)
+### 7. Evaluate (~1-2 hours)
 - Re-run inference with new model
 - Re-run event detection
 - Compare F1 scores
@@ -55,6 +71,7 @@ python code/active_learning/pre_annotate_frames.py --confidence 0.25
 | **Dip frames** | Sudden count decreases | Missed detections that create false departures |
 | **High count** | Scenes with 10+ birds | Challenging to detect all birds accurately |
 | **Count transitions** | Where count changes | Critical moments for event detection |
+| **Fish detections** | Frames with fish present | Important for multi-species tracking and annotation |
 
 ## Success Metrics
 
@@ -86,6 +103,7 @@ data/frames_for_annotation/               # Extracted frames
   ├── dip/
   ├── high_count/
   ├── count_transition/
+  ├── fish/
   └── annotations/
       ├── yolo/                          # YOLO format (.txt)
       └── json/                          # Detailed JSON
