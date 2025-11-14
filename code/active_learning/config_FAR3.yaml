@@ -1,0 +1,64 @@
+# Active Learning Pipeline Configuration - TRI3 Station Example
+# Ready to use with your NAS paths
+
+paths:
+  # CSV detection outputs - searches recursively in all date subfolders
+  csv_dir: "/mnt/BSP_NAS2_work/auklab_model/inference/2025/auklab_model_xlarge_combined_4564_v1/1FPS/FAR3"
+  
+  # Video files - searches recursively in all date subfolders
+  video_dirs:
+    - "/mnt/BSP_NAS2_vol4/Video/Video2025/FAR3"
+  
+  # Where to save results (will be created if doesn't exist)
+  output_dir: "data/active_learning_FAR3_batch1"
+
+# Sampling configuration
+sampling:
+  enabled: true
+  n_files: 100          # Sample 100 random dates/files
+  random_seed: 10
+  
+  # Optional: Filter by date patterns
+  # include_patterns:
+  #   - ".*202506.*"    # Only June 2025
+  #   - ".*202507.*"    # Only July 2025
+
+# Problem detection parameters
+detection:
+  frame_width: 2688
+  frame_height: 1520
+  confidence_threshold: 0.25
+  fish_confidence_threshold: 0.7  # Separate threshold for fish detections
+  edge_margin: 100
+  max_spike_duration: 2
+  max_dip_duration: 3
+  high_count_threshold: 10
+
+# Frame extraction parameters
+extraction:
+  max_per_type: 30
+  priority: "diverse"
+  video_extensions:
+    - ".mkv"
+    - ".mp4"
+    - ".avi"
+  
+  # Enable/disable extraction for specific problem types
+  extract_types:
+    edge_detection: false
+    spike: true
+    dip: true
+    high_count: false
+    count_transition: false
+    fish: true              # Extract frames with fish detections
+
+# Pre-annotation parameters
+pre_annotation:
+  model_path: "models/auklab_model_xlarge_combined_4564_v1.pt"
+  confidence: 0.25
+  enabled: true
+
+processing:
+  n_workers: 4
+  verbose: true
+  save_intermediate: true
