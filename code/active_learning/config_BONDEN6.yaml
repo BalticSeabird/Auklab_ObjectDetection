@@ -3,14 +3,14 @@
 
 paths:
   # CSV detection outputs - searches recursively in all date subfolders
-  csv_dir: "/mnt/BSP_NAS2_work/auklab_model/inference/2025/auklab_model_xlarge_combined_4564_v1/1FPS/TRI3"
+  csv_dir: "/mnt/BSP_NAS2_work/auklab_model/inference/2025/auklab_model_xlarge_combined_4564_v1/1FPS/BONDEN6"
   
   # Video files - searches recursively in all date subfolders
   video_dirs:
-    - "/mnt/BSP_NAS2_vol4/Video/Video2025/TRI3"
+    - "/mnt/BSP_NAS2_vol4/Video/Video2025/BONDEN6"
   
   # Where to save results (will be created if doesn't exist)
-  output_dir: "data/active_learning_TRI3_batch1"
+  output_dir: "data/active_learning_BONDEN6_batch1"
 
 # Sampling configuration
 sampling:
@@ -36,7 +36,7 @@ detection:
 
 # Frame extraction parameters
 extraction:
-  max_per_type: 100
+  max_per_type: 30
   priority: "diverse"
   video_extensions:
     - ".mkv"
@@ -45,11 +45,11 @@ extraction:
   
   # Enable/disable extraction for specific problem types
   extract_types:
-    edge_detection: false
-    spike: false
-    dip: false
-    high_count: false
-    count_transition: false
+    edge_detection: true
+    spike: true
+    dip: true
+    high_count: true
+    count_transition: true
     fish: true              # Extract frames with fish detections
 
 # Pre-annotation parameters

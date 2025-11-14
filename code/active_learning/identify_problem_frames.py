@@ -94,8 +94,8 @@ class ProblemFrameIdentifier:
         if len(transition_frames) > 0:
             problems['count_transition_frames'] = transition_frames
         
-        # 6. Find fish detections (class_id = 2)
-        fish_frames = self._find_fish_detections(df)
+        # 6. Find fish detections (class = 'fish')
+        fish_frames = self._find_fish_detections(df, fish_conf_thresh=0.25)
         if len(fish_frames) > 0:
             problems['fish_frames'] = fish_frames
         
@@ -212,10 +212,10 @@ class ProblemFrameIdentifier:
         
         return results
     
-    def _find_fish_detections(self, df):
+    def _find_fish_detections(self, df, fish_conf_thresh=0.25):
         """Find frames with fish detections (class = 'fish')"""
-        # Filter for fish detections only
-        fish_df = df[df['class'] == 'fish'].copy()
+        # Filter for fish detections with confidence threshold
+        fish_df = df[(df['class'] == 'fish') & (df['confidence'] >= fish_conf_thresh)].copy()
         
         if len(fish_df) == 0:
             return []

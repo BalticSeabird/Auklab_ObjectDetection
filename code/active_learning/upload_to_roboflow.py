@@ -37,6 +37,7 @@ import sys
 from pathlib import Path
 from typing import List, Optional
 import json
+from datetime import datetime
 
 try:
     from roboflow import Roboflow
@@ -119,6 +120,7 @@ class RoboflowBatchUploader:
                       use_annotations: bool = False,
                       split: str = "train",
                       batch_name_prefix: str = "active_learning",
+                      batch_id: Optional[str] = None,
                       resume: bool = True):
         """
         Upload frames organized by problem type to Roboflow.
@@ -129,21 +131,35 @@ class RoboflowBatchUploader:
             use_annotations: Whether to upload pre-annotations (from annotations/yolo/)
             split: Dataset split (train/valid/test)
             batch_name_prefix: Prefix for batch names in Roboflow
+            batch_id: Unique ID for this batch (auto-generated if None)
             resume: Whether to resume from previous interrupted upload
         """
         frames_dir = Path(frames_dir)
         state_file = self._get_upload_state_file(frames_dir)
         
+        # Generate unique batch ID if not provided
+        if batch_id is None:
+            batch_id = datetime.now().strftime("%Y%m%d_%H%M%S")
+        
         # Load previous state if resuming
-        upload_state = self._load_upload_state(state_file) if resume else {'uploaded_files': [], 'completed_batches': []}
+        upload_state = self._load_upload_state(state_file) if resume else {'uploaded_files': [], 'completed_batches': [], 'batch_id': batch_id}
+        
+        # Use existing batch_id if resuming
+        if 'batch_id' in upload_state:
+            batch_id = upload_state['batch_id']
+        else:
+            upload_state['batch_id'] = batch_id
         
         if upload_state['uploaded_files'] or upload_state['completed_batches']:
             print(f"\n⚠ Found previous upload state:")
+            print(f"  - Batch ID: {batch_id}")
             print(f"  - {len(upload_state['uploaded_files'])} files already uploaded")
             print(f"  - {len(upload_state['completed_batches'])} batches completed")
             response = input("Resume from previous upload? (y/n): ").strip().lower()
             if response != 'y':
-                upload_state = {'uploaded_files': [], 'completed_batches': []}
+                # Generate new batch ID for fresh start
+                batch_id = datetime.now().strftime("%Y%m%d_%H%M%S")
+                upload_state = {'uploaded_files': [], 'completed_batches': [], 'batch_id': batch_id}
                 self._clear_upload_state(state_file)
         
         # Available batch types
@@ -180,6 +196,7 @@ class RoboflowBatchUploader:
         print("\n" + "="*80)
         print("UPLOAD PLAN")
         print("="*80)
+        print(f"Batch ID: {batch_id}")
         print(f"Frames directory: {frames_dir}")
         print(f"Use annotations: {use_annotations}")
         print(f"Split: {split}")
@@ -191,7 +208,8 @@ class RoboflowBatchUploader:
             if batch_dir.exists():
                 n_images = len(list(batch_dir.glob("*.jpg"))) + len(list(batch_dir.glob("*.png")))
                 total_images += n_images
-                print(f"  - {available_batches[batch_type]:25s}: {n_images:4d} images")
+                batch_full_name = f"{batch_name_prefix}_{batch_id}_{batch_type}"
+                print(f"  - {available_batches[batch_type]:25s}: {n_images:4d} images → {batch_full_name}")
         
         if upload_state['uploaded_files']:
             print(f"\nAlready uploaded: {len(upload_state['uploaded_files'])} files")
@@ -218,7 +236,7 @@ class RoboflowBatchUploader:
                 
                 uploaded, failed = self._upload_batch(
                     batch_dir=frames_dir / batch_type,
-                    batch_name=f"{batch_name_prefix}_{batch_type}",
+                    batch_name=f"{batch_name_prefix}_{batch_id}_{batch_type}",
                     annotations_dir=annotations_dir,
                     split=split,
                     upload_state=upload_state,
@@ -397,6 +415,9 @@ Examples:
     parser.add_argument('--batch-name-prefix', type=str, default='active_learning',
                        help='Prefix for batch names in Roboflow')
     
+    parser.add_argument('--batch-id', type=str,
+                       help='Unique batch ID (auto-generated timestamp if not provided)')
+    
     args = parser.parse_args()
     
     # Initialize uploader
@@ -412,7 +433,8 @@ Examples:
         batch_types=args.batches,
         use_annotations=args.use_annotations,
         split=args.split,
-        batch_name_prefix=args.batch_name_prefix
+        batch_name_prefix=args.batch_name_prefix,
+        batch_id=args.batch_id
     )
 
 

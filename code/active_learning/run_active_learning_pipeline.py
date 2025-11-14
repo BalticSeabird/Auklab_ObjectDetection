@@ -159,6 +159,7 @@ class ScalableProblemFrameIdentifier:
         self.frame_width = detection_config.get('frame_width', 2688)
         self.frame_height = detection_config.get('frame_height', 1520)
         self.conf_thresh = detection_config.get('confidence_threshold', 0.25)
+        self.fish_conf_thresh = detection_config.get('fish_confidence_threshold', 0.25)
         self.edge_margin = detection_config.get('edge_margin', 100)
         self.max_spike_duration = detection_config.get('max_spike_duration', 2)
         self.max_dip_duration = detection_config.get('max_dip_duration', 3)
@@ -318,8 +319,8 @@ class ScalableProblemFrameIdentifier:
     
     def _find_fish_detections(self, df, per_sec_df):
         """Find frames with fish detections (class = 'fish')."""
-        # Filter for fish detections only
-        fish_df = df[df['class'] == 'fish'].copy()
+        # Filter for fish detections with confidence threshold
+        fish_df = df[(df['class'] == 'fish') & (df['confidence'] >= self.fish_conf_thresh)].copy()
         
         if len(fish_df) == 0:
             return []
