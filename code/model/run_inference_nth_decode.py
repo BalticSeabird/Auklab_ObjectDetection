@@ -14,7 +14,7 @@ from functions import send_email
 device = sys.argv[1]
 stat = sys.argv[2]
 #password = input("Please type gmail password ... ")
-version = input("Please type model version (eg 4564)... ")
+version = input("Please type model version (eg 6080)... ")
 
 datelimit_start = pd.to_datetime("2025-06-15 03:00:00") # Start date...
 datelimit_end = pd.to_datetime("2025-07-15 23:00:00") # Start date...
@@ -25,7 +25,7 @@ filename = "none"
 ##send_email(password, now, device, stat, filename, start = True)
 
 # Settings for batch processing
-frame_skip = 1  # Process every 25th frame
+frame_skip = 25  # Process every 25th frame
 batch_size = 32  # Send 32 frames at a time to the GPU
 
 
@@ -152,7 +152,7 @@ for vid in tqdm.tqdm(vids):
 
 # Send end email
 now = pd.to_datetime("now").strftime("%Y-%m-%d %H:%M:%S")
-send_email(password, now, device, stat, filename, start = False)
+#send_email(password, now, device, stat, filename, start = False)
 
 
 # Run example 

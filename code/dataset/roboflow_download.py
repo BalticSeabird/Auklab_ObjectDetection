@@ -7,6 +7,6 @@ rf = Roboflow(api_key="2Z8LedwxqBlKAbVYyz8T")
 project = rf.workspace("ai-course-2024").project("fish_seabirds_combined-625bd")
 
 # Choose dataset version
-dataset = project.version(9).download("yolov11")  # or "coco", "voc", "yolov8", etc.
+dataset = project.version(11).download("yolov11")  # or "coco", "voc", "yolov8", etc.
 
 print("Dataset downloaded to:", dataset.location)

@@ -6,7 +6,7 @@ Batch processing script to analyze seabird behavior across multiple days.
 Groups CSV files by date, processes each day separately, and generates daily summary reports.
 
 Usage:
-    prod python3 code/postprocess/batch_analyze_days.py ../../../../../../mnt/BSP_NAS2_work/auklab_model/inference/2025/auklab_model_xlarge_combined_4564_v1/1FPS/TRI3/2025-06-28 --station TRI3 --output_dir ../../../../../../mnt/BSP_NAS2_work/auklab_model/summarized_inference/2025/
+    prod python3 code/postprocess/batch_analyze_days.py ../../../../../../mnt/BSP_NAS2_work/auklab_model/inference/2025/auklab_model_xlarge_combined_6080_v1/BONDEN6/ --station BONDEN6 --output_dir ../../../../../../mnt/BSP_NAS2_work/auklab_model/summarized_inference/2025/6080
     dev python3 code/postprocess/batch_analyze_days.py csv_detection_1fps/ --station TRI3 --output_dir dump/summarized_inference/
     
 Features:
