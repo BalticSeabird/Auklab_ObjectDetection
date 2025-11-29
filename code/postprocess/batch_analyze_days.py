@@ -6,8 +6,14 @@ Batch processing script to analyze seabird behavior across multiple days.
 Groups CSV files by date, processes each day separately, and generates daily summary reports.
 
 Usage:
-    prod python3 code/postprocess/batch_analyze_days.py ../../../../../../mnt/BSP_NAS2_work/auklab_model/inference/2025/auklab_model_xlarge_combined_6080_v1/BONDEN6/ --station BONDEN6 --output_dir ../../../../../../mnt/BSP_NAS2_work/auklab_model/summarized_inference/2025/6080
-    dev python3 code/postprocess/batch_analyze_days.py csv_detection_1fps/ --station TRI3 --output_dir dump/summarized_inference/
+    # Process multiple stations with automatic path construction
+    python3 code/postprocess/batch_analyze_days.py --stations BONDEN6 TRI3 FAR3 --model-name 6080 --year 2025
+    
+    # Process single station (legacy mode still supported)
+    python3 code/postprocess/batch_analyze_days.py csv_detection_1fps/ --station TRI3 --model-name 6080 --output-dir dump/summarized_inference/
+    
+    # Process specific date range for multiple stations
+    python3 code/postprocess/batch_analyze_days.py --stations BONDEN6 FAR3 --model-name 6080 --year 2025 --start-date 20250620 --end-date 20250630
     
 Features:
 - Automatically groups files by date from filename timestamps
@@ -59,13 +65,49 @@ from event_detector import (
 )
 
 def extract_date_from_filename(filename):
-    """Extract date from filename pattern like FAR3_20250630T122002_raw.csv"""
+    """
+    Extract date from filename patterns:
+    - Standard: FAR3_20250630T122002_raw.csv
+    - XProtect: 12_BONDEN3_(192.168.1.128)_2025-06-16_00.00.00_64803_raw.csv
+    """
     basename = os.path.basename(filename)
+    
+    # Try standard format: STATION_YYYYMMDDTHHMMSS_raw.csv
     match = re.search(r'(\d{8})T\d{6}', basename)
     if match:
         date_str = match.group(1)
         return datetime.strptime(date_str, '%Y%m%d').date()
+    
+    # Try XProtect format: ##_STATION_(IP)_YYYY-MM-DD_HH.MM.SS_######_raw.csv
+    match = re.search(r'(\d{4})-(\d{2})-(\d{2})_\d{2}\.\d{2}\.\d{2}', basename)
+    if match:
+        date_str = f"{match.group(1)}{match.group(2)}{match.group(3)}"
+        return datetime.strptime(date_str, '%Y%m%d').date()
+    
     return None
+
+def is_date_already_processed(output_dir, station, date_str):
+    """Check if a date has already been processed for a station"""
+    daily_output_dir = os.path.join(output_dir, station, date_str)
+    csv_output_dir = os.path.join(daily_output_dir, 'csv')
+    
+    # Check for key output files
+    required_files = [
+        os.path.join(csv_output_dir, f'daily_events_{date_str}.csv'),
+        os.path.join(daily_output_dir, f'daily_summary_{date_str}.txt')
+    ]
+    
+    return all(os.path.exists(f) for f in required_files)
+
+def construct_paths(station, model_name, year, base_inference_path='/mnt/BSP_NAS2_work/auklab_model',
+                    base_output_path='/mnt/BSP_NAS2_work/auklab_model'):
+    """Construct input and output paths for a station"""
+    model_full_name = f"auklab_model_xlarge_combined_{model_name}_v1"
+    
+    input_dir = os.path.join(base_inference_path, 'inference', str(year), model_full_name, station)
+    output_dir = os.path.join(base_output_path, 'summarized_inference', str(year), model_name)
+    
+    return input_dir, output_dir
 
 def group_files_by_date(csv_files):
     """Group CSV files by their date"""
@@ -140,7 +182,7 @@ def process_single_file(csv_path, fps=1, original_video_fps=25, conf_thresh=0.25
         print(f"Error processing {csv_path}: {str(e)}")
         return None
 
-def combine_daily_results(daily_results):
+def combine_daily_results(daily_results, station=None, model_name=None):
     """Combine results from multiple files for a single day"""
     if not daily_results:
         return None
@@ -156,7 +198,9 @@ def combine_daily_results(daily_results):
         'total_duration_minutes': 0,
         'date': None,
         'first_observation': None,
-        'last_observation': None
+        'last_observation': None,
+        'station': station,
+        'model_name': model_name
     }
     
     # Combine all data
@@ -235,6 +279,28 @@ def combine_daily_results(daily_results):
     combined['per_second_df'] = pd.concat(all_per_second, ignore_index=True) if all_per_second else pd.DataFrame()
     combined['movement_df'] = pd.concat(all_movement, ignore_index=True) if all_movement else pd.DataFrame()
     combined['per_minute_df'] = pd.concat(all_per_minute, ignore_index=True) if all_per_minute else pd.DataFrame()
+    
+    # Generate event_id for each event
+    if not combined['events_df'].empty and 'absolute_timestamp' in combined['events_df'].columns:
+        events_df = combined['events_df']
+        event_ids = []
+        
+        for _, event in events_df.iterrows():
+            timestamp = pd.to_datetime(event['absolute_timestamp'])
+            timestamp_str = timestamp.strftime('%Y%m%d_%H%M%S')
+            event_type_short = 'arr' if event['type'] == 'arrival' else 'dep'
+            
+            # Format: model_station_timestamp_type (e.g., 6080_BONDEN6_20250623_042200_arr)
+            model_part = model_name if model_name else 'model'
+            station_part = station if station else 'station'
+            event_id = f"{model_part}_{station_part}_{timestamp_str}_{event_type_short}"
+            event_ids.append(event_id)
+        
+        combined['events_df']['event_id'] = event_ids
+        
+        # Reorder columns to put event_id first
+        cols = ['event_id'] + [col for col in combined['events_df'].columns if col != 'event_id']
+        combined['events_df'] = combined['events_df'][cols]
     
     return combined
 
@@ -555,56 +621,38 @@ def plot_daily_overview(combined_data, output_dir, date_str):
                 dpi=300, bbox_inches='tight')
     plt.close()
 
-def main():
-    parser = argparse.ArgumentParser(description='Batch analyze seabird behavior across multiple days')
-    parser.add_argument('input_dir', help='Directory containing CSV files')
-    parser.add_argument('--station', '-s', required=True,
-                       help='Station name (e.g., FAR3, FAR1, etc.)')
-    parser.add_argument('--output_dir', '-o', default='daily_analysis/', 
-                       help='Output directory for daily analysis results')
-    parser.add_argument('--fps', type=int, default=1, help='Sampling rate (samples per second)')
-    parser.add_argument('--original_video_fps', type=int, default=25, 
-                       help='Original video FPS')
-    parser.add_argument('--conf_thresh', type=float, default=0.25, 
-                       help='Confidence threshold for detections')
-    parser.add_argument('--smooth_window_s', type=int, default=3)
-    parser.add_argument('--error_window_s', type=int, default=10)
-    parser.add_argument('--hold_seconds', type=int, default=8)
-    parser.add_argument('--fish_window_s', type=int, default=5)
-    parser.add_argument('--movement_smoothing_s', type=int, default=5)
-    parser.add_argument('--flap_area_multiplier', type=float, default=3.0)
-    parser.add_argument('--flap_baseline_s', type=int, default=30)
-    
-    args = parser.parse_args()
-    
+def process_station(input_dir, output_dir, station, model_name, args, skip_processed=True):
+    """Process a single station with skip logic for already-processed dates"""
     # Find all CSV files
-    csv_pattern = os.path.join(args.input_dir, "*.csv")
+    csv_pattern = os.path.join(input_dir, "*.csv")
     csv_files = glob.glob(csv_pattern)
     
     if not csv_files:
-        print(f"No CSV files found in {args.input_dir}")
-        return
+        print(f"No CSV files found in {input_dir}")
+        return 0, 0
     
-    print(f"Found {len(csv_files)} CSV files")
+    print(f"Found {len(csv_files)} CSV files for {station}")
     
     # Group files by date
     date_groups = group_files_by_date(csv_files)
-    print(f"Processing {len(date_groups)} days for station {args.station}:")
-    for date, files in date_groups.items():
-        print(f"  {date}: {len(files)} files")
+    print(f"Processing {len(date_groups)} days for station {station}:")
     
-    # Create output directory with station subfolder
-    station_output_dir = os.path.join(args.output_dir, args.station)
-    os.makedirs(station_output_dir, exist_ok=True)
-    print(f"Output will be saved to: {station_output_dir}")
+    dates_processed = 0
+    dates_skipped = 0
     
-    # Process each day
     for date, files in date_groups.items():
         date_str = date.strftime('%Y%m%d')
-        print(f"\nProcessing {args.station} - {date_str}...")
+        
+        # Check if already processed
+        if skip_processed and is_date_already_processed(output_dir, station, date_str):
+            print(f"  {date_str}: Already processed, skipping ({len(files)} files)")
+            dates_skipped += 1
+            continue
+        
+        print(f"  {date_str}: {len(files)} files - Processing...")
         
         # Create daily output directory under station folder
-        daily_output_dir = os.path.join(station_output_dir, date_str)
+        daily_output_dir = os.path.join(output_dir, station, date_str)
         os.makedirs(daily_output_dir, exist_ok=True)
         
         # Process all files for this day
@@ -621,13 +669,13 @@ def main():
                 daily_results.append(result)
         
         if not daily_results:
-            print(f"No valid results for {date_str}")
+            print(f"    No valid results for {date_str}")
             continue
         
         # Combine daily results
-        combined_data = combine_daily_results(daily_results)
+        combined_data = combine_daily_results(daily_results, station=station, model_name=model_name)
         if not combined_data:
-            print(f"Failed to combine results for {date_str}")
+            print(f"    Failed to combine results for {date_str}")
             continue
         
         # Save combined CSV files
@@ -657,18 +705,169 @@ def main():
         # Generate daily summary report
         report_path = os.path.join(daily_output_dir, f'daily_summary_{date_str}.txt')
         generate_daily_summary_report(combined_data, report_path)
-        print(f"Generated daily report: {report_path}")
         
         # Generate daily overview plot
         plots_output_dir = os.path.join(daily_output_dir, 'plots')
         os.makedirs(plots_output_dir, exist_ok=True)
         plot_daily_overview(combined_data, plots_output_dir, date_str)
-        print(f"Generated daily overview plot: {plots_output_dir}/daily_overview_{date_str}.png")
         
-        print(f"Completed {args.station} - {date_str}: {len(daily_results)} observation periods processed")
+        print(f"    Completed {date_str}: {len(daily_results)} observation periods")
+        dates_processed += 1
     
-    print(f"\nBatch processing complete for station {args.station}!")
-    print(f"Results saved to {station_output_dir}")
+    return dates_processed, dates_skipped
+
+def main():
+    parser = argparse.ArgumentParser(
+        description='Batch analyze seabird behavior across multiple days and stations',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  # Process multiple stations for entire year
+  python3 batch_analyze_days.py --stations BONDEN6 TRI3 FAR3 --model-name 6080 --year 2025
+  
+  # Process with custom base paths
+  python3 batch_analyze_days.py --stations BONDEN6 FAR3 --model-name 6080 --year 2025 \\
+      --base-inference-path /custom/path --base-output-path /custom/output
+  
+  # Legacy mode: process single station with explicit paths
+  python3 batch_analyze_days.py input_dir/ --station TRI3 --model-name 6080 --output-dir output/
+        """
+    )
+    
+    # Station specification (mutually exclusive: legacy single station or new multi-station)
+    station_group = parser.add_mutually_exclusive_group()
+    station_group.add_argument('--stations', nargs='+',
+                              help='Station names to process (e.g., BONDEN6 TRI3 FAR3)')
+    station_group.add_argument('--station', '-s',
+                              help='Single station name (legacy mode, requires input_dir positional arg)')
+    
+    # Input directory (optional for multi-station mode, required for legacy mode)
+    parser.add_argument('input_dir', nargs='?', default=None,
+                       help='Directory containing CSV files (legacy mode only)')
+    
+    parser.add_argument('--model-name', '-m', required=True,
+                       help='Model name/version for event IDs (e.g., 6080)')
+    
+    # Year for multi-station mode
+    parser.add_argument('--year', type=int, default=2025,
+                       help='Year to process (default: 2025)')
+    
+    # Base paths for multi-station mode
+    parser.add_argument('--base-inference-path', default='/mnt/BSP_NAS2_work/auklab_model',
+                       help='Base path for inference data (default: /mnt/BSP_NAS2_work/auklab_model)')
+    parser.add_argument('--base-output-path', default='/mnt/BSP_NAS2_work/auklab_model',
+                       help='Base path for output (default: /mnt/BSP_NAS2_work/auklab_model)')
+    
+    # Output directory for legacy mode
+    parser.add_argument('--output-dir', '-o', default=None,
+                       help='Output directory (legacy mode only, default: daily_analysis/)')
+    
+    # Skip control
+    parser.add_argument('--no-skip', action='store_true',
+                       help='Reprocess already-completed dates (default: skip them)')
+    parser.add_argument('--fps', type=int, default=1, help='Sampling rate (samples per second)')
+    parser.add_argument('--original_video_fps', type=int, default=25, 
+                       help='Original video FPS')
+    parser.add_argument('--conf_thresh', type=float, default=0.25, 
+                       help='Confidence threshold for detections')
+    parser.add_argument('--smooth_window_s', type=int, default=3)
+    parser.add_argument('--error_window_s', type=int, default=10)
+    parser.add_argument('--hold_seconds', type=int, default=8)
+    parser.add_argument('--fish_window_s', type=int, default=5)
+    parser.add_argument('--movement_smoothing_s', type=int, default=5)
+    parser.add_argument('--flap_area_multiplier', type=float, default=3.0)
+    parser.add_argument('--flap_baseline_s', type=int, default=30)
+    
+    args = parser.parse_args()
+    
+    # Validate arguments
+    if args.stations:
+        # Multi-station mode
+        if args.input_dir:
+            print("Warning: input_dir is ignored in multi-station mode")
+        
+        print("="*80)
+        print("MULTI-STATION BATCH ANALYSIS")
+        print("="*80)
+        print(f"Stations: {', '.join(args.stations)}")
+        print(f"Model: {args.model_name}")
+        print(f"Year: {args.year}")
+        print(f"Skip processed: {not args.no_skip}")
+        print("="*80)
+        print()
+        
+        total_stations = len(args.stations)
+        total_dates_processed = 0
+        total_dates_skipped = 0
+        
+        for idx, station in enumerate(args.stations, 1):
+            print(f"\n[{idx}/{total_stations}] Processing station: {station}")
+            print("-" * 80)
+            
+            # Construct paths
+            input_dir, output_dir = construct_paths(
+                station, args.model_name, args.year,
+                args.base_inference_path, args.base_output_path
+            )
+            
+            print(f"Input:  {input_dir}")
+            print(f"Output: {output_dir}/{station}/")
+            
+            if not os.path.exists(input_dir):
+                print(f"WARNING: Input directory not found, skipping station {station}")
+                continue
+            
+            # Process station
+            dates_processed, dates_skipped = process_station(
+                input_dir, output_dir, station, args.model_name, args,
+                skip_processed=not args.no_skip
+            )
+            
+            total_dates_processed += dates_processed
+            total_dates_skipped += dates_skipped
+            
+            print(f"Station {station} complete: {dates_processed} dates processed, {dates_skipped} skipped")
+        
+        print("\n" + "="*80)
+        print("MULTI-STATION PROCESSING COMPLETE")
+        print("="*80)
+        print(f"Stations processed: {total_stations}")
+        print(f"Total dates processed: {total_dates_processed}")
+        print(f"Total dates skipped: {total_dates_skipped}")
+        print("="*80)
+        
+    elif args.station:
+        # Legacy single-station mode
+        if not args.input_dir:
+            print("Error: input_dir positional argument is required for single-station mode")
+            return
+        
+        output_dir = args.output_dir if args.output_dir else 'daily_analysis/'
+        
+        print("="*80)
+        print("SINGLE STATION BATCH ANALYSIS (Legacy Mode)")
+        print("="*80)
+        print(f"Station: {args.station}")
+        print(f"Input: {args.input_dir}")
+        print(f"Output: {output_dir}")
+        print(f"Skip processed: {not args.no_skip}")
+        print("="*80)
+        print()
+        
+        dates_processed, dates_skipped = process_station(
+            args.input_dir, output_dir, args.station, args.model_name, args,
+            skip_processed=not args.no_skip
+        )
+        
+        print(f"\nProcessing complete!")
+        print(f"Dates processed: {dates_processed}")
+        print(f"Dates skipped: {dates_skipped}")
+        print(f"Results saved to: {output_dir}/{args.station}/")
+        
+    else:
+        print("Error: Must specify either --stations (multi-station mode) or --station with input_dir (legacy mode)")
+        parser.print_help()
+        return
 
 if __name__ == "__main__":
     main()

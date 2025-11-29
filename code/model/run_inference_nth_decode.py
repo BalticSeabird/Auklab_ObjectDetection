@@ -67,12 +67,24 @@ for vid in tqdm.tqdm(vids):
         # Pick out relevant information from name
         name = filename.split("_")
         
-        # Different name conventions pre and post 2024
-        if year < 2025:
+        # Handle different naming conventions
+        # Check for xprotect format first (has date with hyphens)
+        has_hyphen_date = any("-" in part and len(part) == 10 for part in name)
+        
+        if has_hyphen_date:
+            # 2025-xprotect: 12_BONDEN3_(IP)_2025-07-07_17.00.00_100402.mp4
+            # Find the date part (YYYY-MM-DD format)
+            date_idx = next(i for i, part in enumerate(name) if "-" in part and len(part) == 10)
+            date_part = name[date_idx]  # 2025-07-07
+            time_part = name[date_idx + 1]  # 17.00.00_100402.mp4
+            time_part = time_part.split("_")[0]  # Remove trailing parts, keep 17.00.00
+            time = f"{date_part} {time_part.replace('.', ':')}"
+        elif year < 2025:
+            # Pre-2025: STATION_DATE_TIME format
             time = name[-2]+" "+name[-1][0:8]
             time = time.replace(".", ":")
-
         else:
+            # 2025-standard: STATION_YYYYMMDDTHHMMSS format
             time = name[1].split(".")[0]
 
         try: 
@@ -156,4 +168,4 @@ now = pd.to_datetime("now").strftime("%Y-%m-%d %H:%M:%S")
 
 
 # Run example 
-#python3 code/model/run_inference_nth_decode.py 0 "TRI3"
+#python3 code/model/run_inference_nth_decode.py 1 "BONDEN3_(192.168.1.128)"

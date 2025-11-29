@@ -28,11 +28,15 @@ from datetime import datetime, timedelta
 
 def extract_timestamp_from_filename(csv_path):
     """
-    Extract timestamp from filename pattern like: FAR3_20250630T122002_raw.csv
+    Extract timestamp from filename patterns:
+    - Standard: FAR3_20250630T122002_raw.csv
+    - XProtect: 12_BONDEN3_(192.168.1.128)_2025-06-16_00.00.00_64803_raw.csv
+    
     Returns datetime object representing the start time of the video
     """
     filename = os.path.basename(csv_path)
-    # Pattern to match YYYYMMDDTHHMMSS format
+    
+    # Try standard format: YYYYMMDDTHHMMSS
     timestamp_pattern = r'(\d{8}T\d{6})'
     match = re.search(timestamp_pattern, filename)
     
@@ -44,9 +48,22 @@ def extract_timestamp_from_filename(csv_path):
         except ValueError:
             print(f"Warning: Could not parse timestamp {timestamp_str} from filename")
             return None
-    else:
-        print(f"Warning: No timestamp found in filename {filename}")
-        return None
+    
+    # Try XProtect format: YYYY-MM-DD_HH.MM.SS
+    xprotect_pattern = r'(\d{4})-(\d{2})-(\d{2})_(\d{2})\.(\d{2})\.(\d{2})'
+    match = re.search(xprotect_pattern, filename)
+    
+    if match:
+        try:
+            year, month, day, hour, minute, second = match.groups()
+            timestamp_str = f"{year}{month}{day}T{hour}{minute}{second}"
+            return datetime.strptime(timestamp_str, '%Y%m%dT%H%M%S')
+        except ValueError:
+            print(f"Warning: Could not parse XProtect timestamp from filename")
+            return None
+    
+    print(f"Warning: No timestamp found in filename {filename}")
+    return None
 
 def frames_to_timestamps(frames, fps, original_video_fps=25, start_time=None):
     """
