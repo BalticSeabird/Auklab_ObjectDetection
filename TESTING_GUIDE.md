@@ -31,6 +31,7 @@ PYTHONPATH=code python -m inference_system.main_orchestrator --config config/sys
 ```
 Tips:
 - Keep the config date filter narrow; targeted station(s) avoid long queues.
+- Add `--skip-discovery` to reuse the existing registry when iterating quickly.
 - Press `Ctrl+C` to stop. Use `--resume` later to continue.
 
 ## 4. Monitor Progress
@@ -45,3 +46,31 @@ Tips:
 - Relax `filters.date_range`, remove `--stations`, or increase worker counts once the smoke test succeeds.
 - Re-run `--discover-only` periodically to capture new videos.
 - For restarts after interruptions: `PYTHONPATH=code python -m inference_system.main_orchestrator --config config/system_config.yaml --resume`.
+
+## 6. Extract Clips (Stage 3)
+Stage 3 now runs in a standalone batch tool that groups events by station/day before creating clips.
+
+```bash
+PYTHONPATH=code python -m inference_system.stage3_batch_runner \
+   --config config/system_config.yaml \
+   --stations TRI3 \
+   --start-date 2022-06-01 \
+   --end-date 2022-06-01
+```
+
+- The runner ingests the summarized daily CSVs from stage 2, discovers matching batches, and tracks progress in `paths.stage3_state_db` (defaults to `data/stage3_processing_state.db`).
+- Use `--discover-only` to refresh the registry without running clips, `--force` to reprocess completed batches, and `--retry-failed` to pick up prior failures.
+- Logs appear under the standard `logs/` directory; clips land in `paths.clips_output/{station}/{date}/` as before.
+
+
+
+# RUN EXAMPLES
+
+# Add files only
+PYTHONPATH=code python -m inference_system.main_orchestrator --config config/system_config.yaml --discover-only
+
+# Run everything 
+PYTHONPATH=code python -m inference_system.main_orchestrator --config config/system_config.yaml
+
+# Run everything without rediscovery
+PYTHONPATH=code python -m inference_system.main_orchestrator --config config/system_config.yaml --skip-discovery

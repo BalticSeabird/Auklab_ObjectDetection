@@ -1,0 +1,91 @@
+system:
+  name: Auklab Video Inference System
+  version: '1.0'
+hardware:
+  gpus:
+    count: 2
+    device_ids:
+    - 0
+    - 1
+  cpus:
+    worker_count: 100
+paths:
+  video_roots:
+  - ../../../../../../mnt/BSP_NAS2/Video
+  - ../../../../../../mnt/BSP_NAS2_vol3/Video
+  - ../../../../../../mnt/BSP_NAS2_vol4/Video
+  inference_output: ../../../../../../mnt/BSP_NAS2_work/auklab_model/inference/
+  event_analysis_output: ../../../../../../mnt/BSP_NAS2_work/auklab_model/summarized_inference/
+  clips_output: ../../../../../../mnt/BSP_NAS2_work/auklab_model/event_data/
+  detection_model: models/auklab_yolo26x_seabirdfish_6080_v1.pt
+  state_db: data/processing_state.db
+  stage3_state_db: data/stage3_processing_state.db
+  log_dir: logs
+processing:
+  stage1_video_inference:
+    frame_skip: 25
+    batch_size: 32
+    confidence_threshold: 0.25
+  stage2_event_detection:
+    fps: 1
+    original_video_fps: 25
+    confidence_threshold: 0.25
+    smooth_window_s: 3
+    error_window_s: 10
+    hold_seconds: 8
+    fish_window_s: 5
+    movement_smoothing_s: 5
+    flap_area_multiplier: 3.0
+    flap_baseline_s: 30
+  stage3_clip_extraction:
+    clip_before: 5
+    clip_after: 10
+    event_types:
+    - arrival
+    - departure
+    fish_only: false
+    video_extensions:
+    - .mkv
+    - .mp4
+    - .avi
+    compression:
+      enabled: true
+      crf: 28
+      preset: fast
+priorities:
+  years:
+  - 2025
+  - 2024
+  - 2023
+  - 2022
+  - 2021
+  - 2020
+  - 2019
+  stations:
+  - BONDEN3
+  - BONDEN6
+  - TRI3
+  - FAR3
+  - TRI6
+  - FAR6
+  - ROST2
+  - ROST3
+  - ROST6
+  - BONDEN2
+  - BONDEN5
+  - ROST4
+  - ROST5
+filters:
+  date_range:
+    start: '2025-01-01'
+    end: '2025-09-01'
+error_handling:
+  max_retries: 2
+  retry_delay_seconds: 60
+  skip_on_persistent_failure: true
+monitoring:
+  update_interval_seconds: 60
+  log_performance_metrics: true
+resume:
+  enabled: true
+  checkpoint_interval_seconds: 300

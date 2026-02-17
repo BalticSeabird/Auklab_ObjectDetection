@@ -16,11 +16,10 @@ ISO_TIMESTAMP_FORMAT = "%Y-%m-%d %H:%M:%S"
 
 
 class ProcessingStage(IntEnum):
-    """Enumeration of pipeline stages."""
+    """Enumeration of pipeline stages handled by the orchestrator."""
 
     STAGE1 = 1  # Video inference
     STAGE2 = 2  # Event detection
-    STAGE3 = 3  # Clip extraction
 
 
 class StageStatus(str, Enum):
@@ -365,13 +364,14 @@ class StateManager:
             for row in cursor.fetchall():
                 stage_breakdown[ProcessingStage(row["stage"])][StageStatus(row["status"])] = row["cnt"]
 
-            stage3 = stage_breakdown[ProcessingStage.STAGE3]
+            final_stage = max(ProcessingStage)
+            final_stage_counts = stage_breakdown[final_stage]
             summary = ProgressSummary(
                 total_videos=total_videos,
-                completed_videos=stage3[StageStatus.COMPLETED],
-                failed_videos=stage3[StageStatus.FAILED],
-                in_progress_videos=stage3[StageStatus.IN_PROGRESS],
-                pending_videos=stage3[StageStatus.PENDING],
+                completed_videos=final_stage_counts[StageStatus.COMPLETED],
+                failed_videos=final_stage_counts[StageStatus.FAILED],
+                in_progress_videos=final_stage_counts[StageStatus.IN_PROGRESS],
+                pending_videos=final_stage_counts[StageStatus.PENDING],
                 stage_breakdown=stage_breakdown,
             )
             return summary
@@ -386,13 +386,40 @@ class StateManager:
                 WHERE stage = ? AND status NOT IN (?, ?)
                 """,
                 (
-                    int(ProcessingStage.STAGE3),
+                    int(max(ProcessingStage)),
                     StageStatus.COMPLETED.value,
                     StageStatus.SKIPPED.value,
                 ),
             )
             remaining = cursor.fetchone()[0]
         return remaining == 0
+
+    def get_videos_for_station_date(self, station: str, date: str) -> List[VideoJob]:
+        """Return all registered videos for a given station/date pair."""
+        with self._connect() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT video_id, station, year, date, filename, filepath, priority_score
+                FROM videos
+                WHERE station = ? AND date = ?
+                ORDER BY discovered_at ASC
+                """,
+                (station, date),
+            )
+            rows = cursor.fetchall()
+        return [
+            VideoJob(
+                video_id=row["video_id"],
+                station=row["station"],
+                year=row["year"],
+                date=row["date"],
+                filename=row["filename"],
+                filepath=Path(row["filepath"]),
+                priority_score=row["priority_score"],
+            )
+            for row in rows
+        ]
 
     def reset_stuck_jobs(self, timeout_seconds: int) -> int:
         """Requeue jobs stuck in progress for longer than the threshold."""

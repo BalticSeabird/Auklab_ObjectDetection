@@ -145,10 +145,6 @@ class WorkerPoolManager:
             for idx in range(self.config.hardware.cpus.worker_count):
                 specs.append(WorkerSpec(worker_id=f"cpu{idx}-stage2", stage=ProcessingStage.STAGE2))
 
-        if ProcessingStage.STAGE3 in self.processors:
-            for gpu_id in gpu_ids:
-                specs.append(WorkerSpec(worker_id=f"gpu{gpu_id}-stage3", stage=ProcessingStage.STAGE3, gpu_id=gpu_id))
-
         if not specs:
             raise ValueError("No worker specs generated. Ensure processors are provided for at least one stage.")
         return specs

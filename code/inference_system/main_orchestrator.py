@@ -17,7 +17,6 @@ from .config_manager import load_config
 from .job_scheduler import JobScheduler
 from .stage1_inference import VideoInferenceProcessor
 from .stage2_events import EventDetectionProcessor
-from .stage3_clips import ClipExtractionProcessor
 from .state_manager import ProcessingStage, StateManager
 from .worker_pool import WorkerPoolManager
 
@@ -28,6 +27,11 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     parser.add_argument("--stations", nargs="*", help="Optional subset of stations to process")
     parser.add_argument("--resume", action="store_true", help="Resume from existing state without rediscovery")
     parser.add_argument("--discover-only", action="store_true", help="Discover videos and exit")
+    parser.add_argument(
+        "--skip-discovery",
+        action="store_true",
+        help="Start workers without refreshing the video registry",
+    )
     parser.add_argument(
         "--log-level",
         default="INFO",
@@ -40,7 +44,12 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
         default=3600,
         help="Seconds before in-progress jobs are considered stuck during resume",
     )
-    return parser.parse_args(argv)
+    args = parser.parse_args(argv)
+
+    if args.skip_discovery and args.discover_only:
+        parser.error("--skip-discovery cannot be combined with --discover-only")
+
+    return args
 
 
 def configure_logging(level: str) -> None:
@@ -68,8 +77,12 @@ def main(argv: Optional[List[str]] = None) -> None:
         state_mgr,
         allowed_stations=args.stations,
     )
-    discovered = scheduler.discover_videos()
-    logging.info("Discovered or refreshed %s video entries", discovered)
+
+    if args.skip_discovery:
+        logging.info("Skipping video discovery; using existing registry state")
+    else:
+        discovered = scheduler.discover_videos()
+        logging.info("Discovered or refreshed %s video entries", discovered)
 
     if args.discover_only:
         logging.info("Discovery-only mode complete")
@@ -80,7 +93,6 @@ def main(argv: Optional[List[str]] = None) -> None:
     processors = {
         ProcessingStage.STAGE1: VideoInferenceProcessor(config),
         ProcessingStage.STAGE2: EventDetectionProcessor(config),
-        ProcessingStage.STAGE3: ClipExtractionProcessor(config),
     }
 
     worker_pool = WorkerPoolManager(config, state_mgr, scheduler, processors)

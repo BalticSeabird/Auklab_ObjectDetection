@@ -18,7 +18,13 @@ LOGGER = logging.getLogger(__name__)
 DEFAULT_VIDEO_EXTENSIONS = {".mkv", ".mp4", ".avi"}
 
 _STATION_TIMESTAMP_RE = re.compile(r"(?P<station>[A-Za-z0-9]+)_(?P<stamp>\d{8}T\d{6})")
+_STATION_COMPACT_TIMESTAMP_RE = re.compile(r"(?P<station>[A-Za-z0-9]+)_(?P<stamp>\d{14})")
+_STATION_HUMAN_TIMESTAMP_RE = re.compile(
+    r"(?:(?P<prefix>[A-Za-z0-9]+)_)?(?P<station>[A-Za-z0-9]+(?:_[A-Za-z0-9]+)*)_(?P<date>\d{4}[-_]\d{2}[-_]\d{2})(?:_(?P<time>\d{2}[:.\-]\d{2}[:.\-]\d{2}))?"
+)
 _STATION_DATE_RE = re.compile(r"(?P<station>[A-Za-z0-9]+)_(?P<date>\d{8})")
+_DATE_DIR_RE = re.compile(r"\d{4}-\d{2}-\d{2}")
+_YEAR_DIR_RE = re.compile(r"\d{4}")
 
 
 @dataclass(slots=True)
@@ -56,7 +62,8 @@ class JobScheduler:
         self.video_extensions = {ext.lower() for ext in config.processing.stage3_clip_extraction.video_extensions}
         if not self.video_extensions:
             self.video_extensions = DEFAULT_VIDEO_EXTENSIONS.copy()
-        self.stage_queues: Dict[ProcessingStage, "queue.PriorityQueue[Tuple[float, VideoJob]]"] = {}
+        # priority queues store (-priority, deterministic tie-breaker, job)
+        self.stage_queues: Dict[ProcessingStage, "queue.PriorityQueue[Tuple[float, str, VideoJob]]"] = {}
         self.allowed_stations = {station.upper() for station in allowed_stations} if allowed_stations else None
         self.allowed_years = set(allowed_years) if allowed_years else None
 
@@ -104,11 +111,11 @@ class JobScheduler:
         """Invalidate cached queues so fresh priorities are pulled from the database."""
         self.stage_queues.clear()
 
-    def build_job_queue(self, stage: ProcessingStage) -> "queue.PriorityQueue[Tuple[float, VideoJob]]":
+    def build_job_queue(self, stage: ProcessingStage) -> "queue.PriorityQueue[Tuple[float, str, VideoJob]]":
         pending = self.state_manager.get_pending_jobs(stage)
-        pq: "queue.PriorityQueue[Tuple[float, VideoJob]]" = queue.PriorityQueue()
+        pq: "queue.PriorityQueue[Tuple[float, str, VideoJob]]" = queue.PriorityQueue()
         for job in pending:
-            pq.put((-job.priority_score, job))
+            pq.put((-job.priority_score, job.video_id, job))
         self.stage_queues[stage] = pq
         return pq
 
@@ -119,14 +126,14 @@ class JobScheduler:
             if pq.empty():
                 return None
         try:
-            _, job = pq.get_nowait()
+            _, _, job = pq.get_nowait()
         except queue.Empty:
             return None
         return job
 
     def return_job(self, job: VideoJob, stage: ProcessingStage) -> None:
         pq = self.stage_queues.setdefault(stage, queue.PriorityQueue())
-        pq.put((-job.priority_score, job))
+        pq.put((-job.priority_score, job.video_id, job))
 
     def calculate_priority(self, station: str, year: int, job_date: date_cls) -> float:
         """Score videos using year/station priority lists and recency."""
@@ -172,20 +179,65 @@ class JobScheduler:
     def _parse_video_metadata(self, video_path: Path) -> Optional[DiscoveredVideo]:
         stem = video_path.stem
         name = video_path.name
+
+        def _safe_parse(stamp: str, fmt: str, context: str) -> Optional[datetime]:
+            try:
+                return datetime.strptime(stamp, fmt)
+            except ValueError as exc:
+                LOGGER.debug("Skipping %s token '%s' in %s: %s", context, stamp, video_path, exc)
+                return None
+
         match = _STATION_TIMESTAMP_RE.search(stem)
         if match:
             station = match.group("station").upper()
-            timestamp = datetime.strptime(match.group("stamp"), "%Y%m%dT%H%M%S")
-            video_id = f"{station}_{match.group('stamp')}"
-            return DiscoveredVideo(video_path, video_id, station, timestamp, name)
+            stamp = match.group("stamp")
+            timestamp = _safe_parse(stamp, "%Y%m%dT%H%M%S", "timestamp")
+            if timestamp:
+                video_id = f"{station}_{stamp}"
+                return DiscoveredVideo(video_path, video_id, station, timestamp, name)
+
+        match = _STATION_COMPACT_TIMESTAMP_RE.search(stem)
+        if match:
+            station = match.group("station").upper()
+            stamp = match.group("stamp")
+            timestamp = _safe_parse(stamp, "%Y%m%d%H%M%S", "compact timestamp")
+            if timestamp:
+                iso_stamp = f"{stamp[:8]}T{stamp[8:]}"
+                video_id = f"{station}_{iso_stamp}"
+                return DiscoveredVideo(video_path, video_id, station, timestamp, name)
+
+        match = _STATION_HUMAN_TIMESTAMP_RE.search(stem)
+        if match:
+            station = match.group("station").upper()
+            date_token = re.sub(r"[^0-9]", "", match.group("date") or "")
+            time_token = match.group("time")
+            time_digits = re.sub(r"[^0-9]", "", time_token) if time_token else ""
+            if len(date_token) == 8:
+                if time_digits and len(time_digits) == 6:
+                    stamp = f"{date_token}{time_digits}"
+                    timestamp = _safe_parse(stamp, "%Y%m%d%H%M%S", "human timestamp")
+                    if timestamp:
+                        formatted = timestamp.strftime("%Y%m%dT%H%M%S")
+                        video_id = f"{station}_{formatted}"
+                        return DiscoveredVideo(video_path, video_id, station, timestamp, name)
+                else:
+                    timestamp = _safe_parse(date_token, "%Y%m%d", "human date")
+                    if timestamp:
+                        video_id = f"{station}_{timestamp.strftime('%Y%m%d')}_{self._stable_suffix(video_path)}"
+                        return DiscoveredVideo(video_path, video_id, station, timestamp, name)
 
         match = _STATION_DATE_RE.search(stem)
         if match:
             station = match.group("station").upper()
-            timestamp = datetime.strptime(match.group("date"), "%Y%m%d")
             token = match.group("date")
-            video_id = f"{station}_{token}_{self._stable_suffix(video_path)}"
-            return DiscoveredVideo(video_path, video_id, station, timestamp, name)
+            year = int(token[:4])
+            if 2000 <= year <= 2100:
+                timestamp = _safe_parse(token, "%Y%m%d", "date token")
+                if timestamp:
+                    video_id = f"{station}_{token}_{self._stable_suffix(video_path)}"
+                    return DiscoveredVideo(video_path, video_id, station, timestamp, name)
+            else:
+                LOGGER.debug("Skipping unrealistic date token '%s' in %s", token, video_path)
 
         station = self._infer_station(video_path)
         timestamp = datetime.utcfromtimestamp(video_path.stat().st_mtime)
@@ -199,6 +251,10 @@ class JobScheduler:
             if not part or "@" in part:
                 continue
             if any(lowered.endswith(ext) for ext in DEFAULT_VIDEO_EXTENSIONS):
+                continue
+            if _DATE_DIR_RE.fullmatch(part):
+                continue
+            if _YEAR_DIR_RE.fullmatch(part):
                 continue
             return part.upper()
         return video_path.stem.upper()

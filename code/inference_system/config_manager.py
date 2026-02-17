@@ -57,6 +57,7 @@ class PathsConfig(BaseModel):
     clips_output: Path
     detection_model: Path
     state_db: Path
+    stage3_state_db: Path
     log_dir: Path
 
     @model_validator(mode="after")
@@ -243,6 +244,7 @@ def generate_default_config() -> Dict[str, Any]:
             "clips_output": "/mnt/BSP_NAS2_work/auklab_model/event_data",
             "detection_model": "models/auklab_model_xlarge_combined_6080_v1.pt",
             "state_db": "data/processing_state.db",
+            "stage3_state_db": "data/stage3_processing_state.db",
             "log_dir": "logs",
         },
         "processing": {

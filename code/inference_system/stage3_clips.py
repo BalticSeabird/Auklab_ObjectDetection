@@ -58,18 +58,22 @@ class ClipExtractionProcessor(StageProcessor):
             raise PermanentError(f"Source video missing for {job.video_id}: {job.filepath}")
 
         events_df = pd.read_csv(event_csv)
+        source_label = self._source_label(job)
+        filtered_events = self.filter_events(events_df, source_label=source_label)
+        return self.process_events_for_job(job, filtered_events, event_csv_path=event_csv)
+
+    def process_events_for_job(
+        self,
+        job: VideoJob,
+        events_df: pd.DataFrame,
+        *,
+        event_csv_path: Path,
+    ) -> ProcessingResult:
+        """Generate clips for the subset of events that belong to the provided job."""
         if events_df.empty:
             self.logger.info("[%s] No events to clip", job.video_id)
             return ProcessingResult(
-                metadata={"clips": 0, "events_csv": str(event_csv)},
-                metrics=ProcessingMetrics(clips_count=0),
-            )
-
-        events_df = self._filter_events(events_df)
-        if events_df.empty:
-            self.logger.info("[%s] Events filtered out by configuration", job.video_id)
-            return ProcessingResult(
-                metadata={"clips": 0, "events_csv": str(event_csv)},
+                metadata={"clips": 0, "events_csv": str(event_csv_path)},
                 metrics=ProcessingMetrics(clips_count=0),
             )
 
@@ -88,7 +92,7 @@ class ClipExtractionProcessor(StageProcessor):
                 clips_failed += 1
 
         metadata = {
-            "events_csv": str(event_csv),
+            "events_csv": str(event_csv_path),
             "clips_created": clips_created,
             "clips_failed": clips_failed,
         }
@@ -97,7 +101,7 @@ class ClipExtractionProcessor(StageProcessor):
             metrics=ProcessingMetrics(clips_count=clips_created),
         )
 
-    def _filter_events(self, events_df: pd.DataFrame) -> pd.DataFrame:
+    def _filter_events(self, events_df: pd.DataFrame, *, source_label: Optional[str] = None) -> pd.DataFrame:
         df = events_df.copy()
         if "timestamp" not in df.columns:
             if "absolute_timestamp" in df.columns:
@@ -107,12 +111,37 @@ class ClipExtractionProcessor(StageProcessor):
         else:
             df["timestamp"] = pd.to_datetime(df["timestamp"], errors="coerce")
 
+        if source_label:
+            df = self._filter_events_for_source(df, source_label)
+
         if self.stage_cfg.event_types:
             df = df[df["type"].isin(self.stage_cfg.event_types)]
         if self.stage_cfg.fish_only:
             df = df[(df["type"] == "arrival") & (df.get("arrival_with_fish", False) == True)]
         df = df.dropna(subset=["timestamp"])
         return df
+
+    def _filter_events_for_source(self, df: pd.DataFrame, source_label: str) -> pd.DataFrame:
+        normalized_label = source_label.upper()
+        if "file" in df.columns:
+            matches = df["file"].astype(str).str.upper() == normalized_label
+            subset = df[matches]
+            if not subset.empty:
+                return subset
+        if "observation_period" in df.columns:
+            cleaned = (
+                df["observation_period"]
+                .astype(str)
+                .str.replace(".csv", "", regex=False)
+                .str.replace("_raw", "", regex=False)
+                .str.upper()
+            )
+            matches = cleaned == normalized_label
+            subset = df[matches]
+            if not subset.empty:
+                return subset
+        self.logger.debug("No events matched source label %s", source_label)
+        return df.iloc[0:0]
 
     def _process_event(
         self,
@@ -121,8 +150,10 @@ class ClipExtractionProcessor(StageProcessor):
         video_start: datetime,
         video_duration: Optional[float],
     ) -> bool:
-        timestamp: datetime = event["timestamp"]
-        offset_seconds = (timestamp - video_start).total_seconds()
+        offset_seconds = self._resolve_event_offset(event, video_start)
+        if offset_seconds is None:
+            self.logger.warning("[%s] Unable to determine offset for event", job.video_id)
+            return False
         if offset_seconds < 0:
             self.logger.warning("[%s] Event before video start, skipping", job.video_id)
             return False
@@ -204,6 +235,21 @@ class ClipExtractionProcessor(StageProcessor):
                 ).to_csv(detections_csv, index=False)
 
         return True
+
+    def _resolve_event_offset(self, event: pd.Series, video_start: Optional[datetime]) -> Optional[float]:
+        if "second" in event and pd.notna(event["second"]):
+            try:
+                return float(event["second"])
+            except (TypeError, ValueError):
+                self.logger.debug("Invalid second value for event %s", event.get("event_id"))
+        timestamp = event.get("timestamp")
+        if pd.isna(timestamp) or video_start is None:
+            return None
+        return float((timestamp - video_start).total_seconds())
+
+    @staticmethod
+    def _source_label(job: VideoJob) -> str:
+        return job.filepath.stem.upper()
 
     def _determine_subfolder(self, event: pd.Series) -> str:
         if event["type"] == "arrival":
