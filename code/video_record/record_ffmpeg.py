@@ -38,13 +38,13 @@ def build_ffmpeg_command(
 
         # --- Copy streams (fast, non-destructive) ---
         "-c:v", "copy",
+        "-copyts",
         "-copytb", "1",
         "-fps_mode", "passthrough",
         "-avoid_negative_ts", "make_zero",
 
         # --- Segmentation ---
         "-f", "segment",
-        "-reset_timestamps", "1",
         "-segment_time", str(segment_time),
         "-segment_time_delta", "0.05",
         "-segment_atclocktime", "0",
