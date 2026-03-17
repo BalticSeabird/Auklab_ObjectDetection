@@ -1,73 +1,119 @@
-"""Stage 2 processor: convert detection CSVs into ecological event summaries."""
+"""Stage 2 processor: detect events per video and extract annotated clips.
+
+Each invocation operates on a single video's detection CSV and produces:
+  - A per-video events CSV  ({video_stem}_events.csv)
+  - Annotated mp4 clips for each detected event
+
+Daily aggregation / summary reports are intentionally NOT performed here.
+They belong to a separate, optional post-processing step once all videos for
+a given day have been processed.
+"""
 
 from __future__ import annotations
 
 import logging
+import re
 import sys
+from datetime import timedelta
 from pathlib import Path
 from typing import Optional
 
-import matplotlib
 import pandas as pd
-
-matplotlib.use("Agg")  # Ensure headless plotting
 
 PROJECT_CODE_DIR = Path(__file__).resolve().parents[1]
 CODE_ROOT = PROJECT_CODE_DIR.parent
 if str(CODE_ROOT) not in sys.path:
     sys.path.insert(0, str(CODE_ROOT))
 
-from postprocess.batch_analyze_days import (  # type: ignore  # noqa: E402
-    combine_daily_results,
-    generate_daily_summary_report,
-    plot_daily_overview,
-    process_single_file,
-)
+from postprocess.batch_analyze_days import process_single_file  # type: ignore  # noqa: E402
+from postprocess.extract_event_clips import format_event_filename  # type: ignore  # noqa: E402
 
 from .config_manager import Config
-from .path_utils import get_event_csv_path, get_event_output_dir, get_model_display_name
+from .path_utils import get_clips_output_dir, get_detection_csv_path, get_event_csv_path
+from .stage3_clips import ClipExtractionProcessor
 from .state_manager import VideoJob
 from .worker_pool import (
-    PermanentError,
     ProcessingMetrics,
     ProcessingResult,
     RecoverableError,
     StageProcessor,
     WorkerContext,
 )
-from .path_utils import get_detection_csv_path
 
 LOGGER = logging.getLogger(__name__)
 
+_EMPTY_EVENT_COLUMNS = [
+    "event_id", "type", "second", "before_mean", "after_mean",
+    "arrival_with_fish", "fish_count", "fish_mean_area", "fish_max_area",
+    "absolute_timestamp", "event_video_path", "original_video_path",
+]
+
 
 class EventDetectionProcessor(StageProcessor):
-    """Analyze detection CSVs to derive events, movement, and plots."""
+    """Detect events for a single video and extract annotated video clips."""
 
     def __init__(self, config: Config) -> None:
         self.config = config
         self.stage_cfg = config.processing.stage2_event_detection
-        self.model_label = get_model_display_name(config)
+        self.clip_processor = ClipExtractionProcessor(config)
         self.logger = logging.getLogger("stage2")
+        self.model_name = self._derive_model_name(config)
 
     def process(self, job: VideoJob, context: WorkerContext) -> Optional[ProcessingResult]:  # noqa: ARG002
         detections_csv = get_detection_csv_path(self.config, job)
         if not detections_csv.exists():
             raise RecoverableError(f"Detections CSV missing for {job.video_id}: {detections_csv}")
 
-        event_root = get_event_output_dir(self.config, job)
-        csv_dir = event_root / "csv"
-        plots_dir = event_root / "plots"
-        csv_dir.mkdir(parents=True, exist_ok=True)
-        plots_dir.mkdir(parents=True, exist_ok=True)
-
         event_csv = get_event_csv_path(self.config, job)
+
+        # ── Event detection ────────────────────────────────────────────────
         if event_csv.exists():
-            self.logger.info("[%s] events already generated", job.video_id)
-            return ProcessingResult(
-                metadata={"events_csv": str(event_csv), "skipped": True},
-                metrics=ProcessingMetrics(events_count=0),
-                duration_seconds=0.0,
-            )
+            self.logger.info("[%s] Events CSV already exists, reusing", job.video_id)
+            events_df = pd.read_csv(event_csv)
+        else:
+            events_df = self._detect_and_save(job, detections_csv, event_csv)
+
+        events_count = len(events_df)
+
+        # ── Clip extraction ────────────────────────────────────────────────
+        clips_created = 0
+        clips_failed = 0
+        if not events_df.empty:
+            if job.filepath.exists():
+                filtered = self.clip_processor._filter_events(events_df)
+                clip_result = self.clip_processor.process_events_for_job(
+                    job, filtered, event_csv_path=event_csv
+                )
+                if clip_result and clip_result.metadata:
+                    clips_created = clip_result.metadata.get("clips_created", 0)
+                    clips_failed = clip_result.metadata.get("clips_failed", 0)
+            else:
+                self.logger.warning(
+                    "[%s] Source video not found, skipping clip extraction: %s",
+                    job.video_id,
+                    job.filepath,
+                )
+
+        return ProcessingResult(
+            metadata={
+                "events_csv": str(event_csv),
+                "events_count": events_count,
+                "clips_created": clips_created,
+                "clips_failed": clips_failed,
+            },
+            metrics=ProcessingMetrics(events_count=events_count, clips_count=clips_created),
+        )
+
+    # ──────────────────────────────────────────────────────────────────────
+
+    def _detect_and_save(
+        self,
+        job: VideoJob,
+        detections_csv: Path,
+        event_csv: Path,
+    ) -> pd.DataFrame:
+        """Run event detection and persist a per-video events CSV."""
+        event_csv.parent.mkdir(parents=True, exist_ok=True)
 
         result = process_single_file(
             str(detections_csv),
@@ -85,59 +131,112 @@ class EventDetectionProcessor(StageProcessor):
 
         if not result:
             self.logger.warning("[%s] No detections available for event analysis", job.video_id)
-            columns = ["event_id", "type", "timestamp", "absolute_timestamp"]
-            csv_dir.mkdir(parents=True, exist_ok=True)
-            pd.DataFrame(columns=columns).to_csv(event_csv, index=False)
-            return ProcessingResult(
-                metadata={"events_csv": str(event_csv), "events": 0},
-                metrics=ProcessingMetrics(events_count=0),
-            )
+            return self._save_empty(event_csv)
 
-        combined = combine_daily_results([result], station=job.station, model_name=self.model_label)
-        if not combined:
-            raise PermanentError(f"Failed to combine event data for {job.video_id}")
+        events = result.get("events", [])
+        if not events:
+            self.logger.info("[%s] No events detected", job.video_id)
+            return self._save_empty(event_csv)
 
-        date_str = (combined["date"].strftime("%Y%m%d") if combined.get("date") else job.date.replace("-", ""))
-        csv_outputs = self._write_csv_outputs(combined, csv_dir, date_str)
-        summary_path = event_root / f"daily_summary_{date_str}.txt"
-        generate_daily_summary_report(combined, summary_path)
-        plot_daily_overview(combined, plots_dir, date_str)
+        start_time = result.get("start_time")
+        rows = []
+        for event in events:
+            row = dict(event)
+            if start_time and "second" in event:
+                row["absolute_timestamp"] = start_time + timedelta(seconds=int(event["second"]))
+            rows.append(row)
 
-        events_count = len(combined["events_df"]) if not combined["events_df"].empty else 0
-        events_path = csv_outputs.get("events", event_csv)
-        metadata = {
-            "events_csv": str(events_path),
-            "flaps_csv": str(csv_outputs.get("flaps", "")),
-            "per_second_csv": str(csv_outputs.get("per_second", "")),
-            "movement_csv": str(csv_outputs.get("movement", "")),
-            "per_minute_csv": str(csv_outputs.get("per_minute", "")),
-        }
+        events_df = pd.DataFrame(rows)
 
-        return ProcessingResult(
-            metadata=metadata,
-            metrics=ProcessingMetrics(events_count=events_count),
-        )
+        # Attach stable, human-readable event identifiers used for filenames.
+        # Preferred format: {model}_{station}_{YYYYMMDD}_{HHMMSS}_{arr|dep}
+        # Fallback (when timestamps cannot be parsed from filename):
+        #   {model}_{station}_{video_stem}_s{second:06d}_{arr|dep}
+        if not events_df.empty and "type" in events_df.columns:
+            def _build_event_id(row: pd.Series) -> str:
+                event_type_short = "arr" if row.get("type") == "arrival" else "dep"
+                station_part = job.station if job.station else "station"
 
-    def _write_csv_outputs(self, combined_data, csv_dir: Path, date_str: str) -> dict:
-        outputs = {}
-        if not combined_data["events_df"].empty:
-            events_path = csv_dir / f"daily_events_{date_str}.csv"
-            combined_data["events_df"].to_csv(events_path, index=False)
-            outputs["events"] = events_path
-        if not combined_data["flaps_df"].empty:
-            flaps_path = csv_dir / f"daily_flaps_{date_str}.csv"
-            combined_data["flaps_df"].to_csv(flaps_path, index=False)
-            outputs["flaps"] = flaps_path
-        if not combined_data["per_second_df"].empty:
-            per_second_path = csv_dir / f"daily_per_second_{date_str}.csv"
-            combined_data["per_second_df"].to_csv(per_second_path, index=False)
-            outputs["per_second"] = per_second_path
-        if not combined_data["movement_df"].empty:
-            movement_path = csv_dir / f"daily_movement_{date_str}.csv"
-            combined_data["movement_df"].to_csv(movement_path, index=False)
-            outputs["movement"] = movement_path
-        if not combined_data["per_minute_df"].empty:
-            per_minute_path = csv_dir / f"daily_per_minute_{date_str}.csv"
-            combined_data["per_minute_df"].to_csv(per_minute_path, index=False)
-            outputs["per_minute"] = per_minute_path
-        return outputs
+                if "absolute_timestamp" in events_df.columns and pd.notna(row.get("absolute_timestamp")):
+                    try:
+                        ts = pd.to_datetime(row["absolute_timestamp"])
+                        timestamp_str = ts.strftime("%Y%m%d_%H%M%S")
+                        return f"{self.model_name}_{station_part}_{timestamp_str}_{event_type_short}"
+                    except Exception:
+                        pass
+
+                # Fallback ID when no valid absolute timestamp is available.
+                second_value = row.get("second", 0)
+                try:
+                    second_int = int(float(second_value))
+                except (TypeError, ValueError):
+                    second_int = 0
+                return (
+                    f"{self.model_name}_{station_part}_{job.filepath.stem}_"
+                    f"s{second_int:06d}_{event_type_short}"
+                )
+
+            events_df["event_id"] = events_df.apply(_build_event_id, axis=1)
+
+        # Attach path information so each event row knows both the
+        # original source video and the target path of the generated
+        # event clip.
+        if not events_df.empty:
+            original_video_path = str(job.filepath.resolve())
+
+            def _determine_subfolder(row: pd.Series) -> str:
+                if row.get("type") == "arrival":
+                    has_fish = bool(row.get("arrival_with_fish", False))
+                    return "arrival_with_fish" if has_fish else "arrival_no_fish"
+                return "departure"
+
+            def _event_video_path(row: pd.Series) -> str:
+                subfolder = _determine_subfolder(row)
+                video_out_dir = get_clips_output_dir(self.config, job, f"{subfolder}/video")
+                filename = format_event_filename(row.get("event_id"))
+                return str((video_out_dir / filename).resolve())
+
+            events_df["original_video_path"] = original_video_path
+            events_df["event_video_path"] = events_df.apply(_event_video_path, axis=1)
+
+            # Reorder columns to put identifiers and paths first when present
+            preferred_prefix = [
+                "event_id",
+                "event_video_path",
+                "original_video_path",
+            ]
+            prefix_cols = [col for col in preferred_prefix if col in events_df.columns]
+            cols = prefix_cols + [col for col in events_df.columns if col not in prefix_cols]
+            events_df = events_df[cols]
+
+        events_df.to_csv(event_csv, index=False)
+        self.logger.info("[%s] %d event(s) saved to %s", job.video_id, len(events_df), event_csv)
+        return events_df
+
+    def _save_empty(self, event_csv: Path) -> pd.DataFrame:
+        empty_df = pd.DataFrame(columns=_EMPTY_EVENT_COLUMNS)
+        empty_df.to_csv(event_csv, index=False)
+        return empty_df
+
+    @staticmethod
+    def _derive_model_name(config: Config) -> str:
+        """Derive a compact model identifier for use in event IDs.
+
+        Examples:
+          models/auklab_yolo26x_seabirdfish_6080_v1.pt -> "6080"
+          models/yolo11x.pt -> "yolo11x"
+        """
+        stem = Path(config.paths.detection_model).stem
+
+        # Prefer a 4-digit block (e.g. 6080) before an optional _vN suffix
+        match = re.search(r"(\d{4})(?:_v\d+)?$", stem)
+        if match:
+            return match.group(1)
+
+        # Otherwise, fall back to the trailing digit sequence if any
+        match = re.search(r"(\d+)$", stem)
+        if match:
+            return match.group(1)
+
+        # As a last resort, use the full stem
+        return stem

@@ -52,18 +52,42 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     return args
 
 
-def configure_logging(level: str) -> None:
-    logging.basicConfig(
-        level=getattr(logging, level.upper(), logging.INFO),
-        format="[%(asctime)s] [%(levelname)s] %(name)s: %(message)s",
-    )
+def configure_logging(level: str, log_dir: Path | None = None) -> None:
+    """Configure root logging for console and optional file output.
+
+    When log_dir is provided, a main.log file will be created there and all
+    logs from the inference system (including workers) will be written to it
+    in addition to the console.
+    """
+
+    log_level = getattr(logging, level.upper(), logging.INFO)
+
+    # Always log to the console
+    formatter = logging.Formatter("[%(asctime)s] [%(levelname)s] %(name)s: %(message)s")
+    console_handler = logging.StreamHandler()
+    console_handler.setFormatter(formatter)
+
+    handlers = [console_handler]
+
+    # Optional file handler rooted at config.paths.log_dir
+    if log_dir is not None:
+        log_dir = Path(log_dir)
+        log_dir.mkdir(parents=True, exist_ok=True)
+        file_handler = logging.FileHandler(log_dir / "main.log")
+        file_handler.setFormatter(formatter)
+        handlers.append(file_handler)
+
+    logging.basicConfig(level=log_level, handlers=handlers)
 
 
 def main(argv: Optional[List[str]] = None) -> None:
     args = parse_args(argv)
-    configure_logging(args.log_level)
 
+    # Load config first so we know where to place log files.
     config = load_config(args.config)
+    configure_logging(args.log_level, config.paths.log_dir)
+
+    logging.info("Starting inference orchestrator with config %s", args.config)
     state_mgr = StateManager(config.paths.state_db)
     state_mgr.initialize_db()
 
@@ -71,6 +95,8 @@ def main(argv: Optional[List[str]] = None) -> None:
         logging.info("Resetting stuck jobs older than %ss", args.stuck_timeout)
         reset_count = state_mgr.reset_stuck_jobs(timeout_seconds=args.stuck_timeout)
         logging.info("Reset %s stuck stage entries", reset_count)
+        failed_reset = state_mgr.reset_failed_jobs(stage=ProcessingStage.STAGE2)
+        logging.info("Reset %s failed stage2 entries for retry", failed_reset)
 
     scheduler = JobScheduler(
         config,
@@ -84,11 +110,13 @@ def main(argv: Optional[List[str]] = None) -> None:
         discovered = scheduler.discover_videos()
         logging.info("Discovered or refreshed %s video entries", discovered)
 
+    # Always recalculate priorities from current config, even for videos that
+    # were already present in the database from previous runs.
+    scheduler.calculate_priorities()
+
     if args.discover_only:
         logging.info("Discovery-only mode complete")
         return
-
-    scheduler.calculate_priorities()
 
     processors = {
         ProcessingStage.STAGE1: VideoInferenceProcessor(config),

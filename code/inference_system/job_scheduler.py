@@ -18,7 +18,18 @@ LOGGER = logging.getLogger(__name__)
 DEFAULT_VIDEO_EXTENSIONS = {".mkv", ".mp4", ".avi"}
 
 _STATION_TIMESTAMP_RE = re.compile(r"(?P<station>[A-Za-z0-9]+)_(?P<stamp>\d{8}T\d{6})")
+_STATION_UNDERSCORE_TIMESTAMP_RE = re.compile(
+    r"(?P<station>[A-Za-z0-9]+)_(?P<date>\d{8})_(?P<time>\d{6})"
+)
 _STATION_COMPACT_TIMESTAMP_RE = re.compile(r"(?P<station>[A-Za-z0-9]+)_(?P<stamp>\d{14})")
+_STATION_XPROTECT_RE = re.compile(
+    r"(?:(?P<camera>\d+)_)?"
+    r"(?P<station>[A-Za-z0-9]+)"
+    r"(?:_\([^)]*\))?"
+    r"_(?P<date>\d{4}-\d{2}-\d{2})"
+    r"_(?P<time>\d{2}\.\d{2}\.\d{2})"
+    r"(?:_\d+)?$"
+)
 _STATION_HUMAN_TIMESTAMP_RE = re.compile(
     r"(?:(?P<prefix>[A-Za-z0-9]+)_)?(?P<station>[A-Za-z0-9]+(?:_[A-Za-z0-9]+)*)_(?P<date>\d{4}[-_]\d{2}[-_]\d{2})(?:_(?P<time>\d{2}[:.\-]\d{2}[:.\-]\d{2}))?"
 )
@@ -47,7 +58,6 @@ class DiscoveredVideo:
 
 
 class JobScheduler:
-    """Discovers video files, ranks them, and feeds work queues per stage."""
 
     def __init__(
         self,
@@ -64,8 +74,65 @@ class JobScheduler:
             self.video_extensions = DEFAULT_VIDEO_EXTENSIONS.copy()
         # priority queues store (-priority, deterministic tie-breaker, job)
         self.stage_queues: Dict[ProcessingStage, "queue.PriorityQueue[Tuple[float, str, VideoJob]]"] = {}
-        self.allowed_stations = {station.upper() for station in allowed_stations} if allowed_stations else None
+
+        # Optional explicit station filters from CLI (--stations). These are
+        # used as an allow-list when provided, with case-insensitive partial
+        # matching.
+        #
+        # IMPORTANT: config.priorities.stations is NOT an allow-list for
+        # discovery. It only influences priority scoring.
+        if allowed_stations:
+            self._explicit_station_filters: Optional[List[str]] = [station.upper() for station in allowed_stations]
+        else:
+            self._explicit_station_filters = None
+
+        # Stations that should always be ignored when building the database,
+        # regardless of priorities. Also matched by case-insensitive
+        # substring.
+        if config.filters and config.filters.ignored_stations:
+            self._ignored_station_patterns: List[str] = [s.upper() for s in config.filters.ignored_stations]
+        else:
+            self._ignored_station_patterns = []
         self.allowed_years = set(allowed_years) if allowed_years else None
+
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _normalize_station_token(value: str) -> str:
+        """Normalize station tokens for resilient matching.
+
+        Removes separators and other non-alphanumeric characters so patterns
+        like "BJORN3_TRI3_SCALE" and "BJORN3TRI3SCALE" match each other.
+        """
+        return re.sub(r"[^A-Z0-9]", "", value.upper())
+
+    def _station_matches_pattern(self, station: str, pattern: str) -> bool:
+        if not pattern:
+            return False
+        station_upper = station.upper()
+        pattern_upper = pattern.upper()
+        if pattern_upper in station_upper:
+            return True
+
+        station_norm = self._normalize_station_token(station)
+        pattern_norm = self._normalize_station_token(pattern)
+        return bool(pattern_norm) and pattern_norm in station_norm
+
+    def _is_station_ignored(self, station: str) -> bool:
+        return any(self._station_matches_pattern(station, pattern) for pattern in self._ignored_station_patterns)
+
+    def _is_station_selected(self, station: str) -> bool:
+        """Return True if station passes ignore + optional CLI selection.
+
+        - ignored_stations always exclude stations from discovery/DB and queues.
+        - CLI --stations acts as an optional allow-list with partial matching.
+        - If --stations is not provided, all non-ignored stations are selected.
+        """
+        if self._is_station_ignored(station):
+            return False
+        if not self._explicit_station_filters:
+            return True
+        return any(self._station_matches_pattern(station, pattern) for pattern in self._explicit_station_filters)
 
     def discover_videos(self) -> int:
         """Walk configured video roots and register unseen files."""
@@ -78,7 +145,7 @@ class JobScheduler:
                 continue
             if metadata.video_id in seen_ids:
                 continue
-            if self.allowed_stations and metadata.station.upper() not in self.allowed_stations:
+            if not self._is_station_selected(metadata.station):
                 continue
             if self.allowed_years and metadata.year not in self.allowed_years:
                 continue
@@ -108,13 +175,37 @@ class JobScheduler:
         return inserted
 
     def calculate_priorities(self) -> None:
-        """Invalidate cached queues so fresh priorities are pulled from the database."""
+        """Recalculate persisted priority scores for all registered videos.
+
+        This ensures priority changes in config are applied even when videos
+        are already present in the database and discovery is skipped.
+        """
+        updates: Dict[str, float] = {}
+        for job in self.state_manager.get_all_videos():
+            try:
+                job_date = date_cls.fromisoformat(job.date)
+            except ValueError:
+                LOGGER.debug("Skipping priority recalculation for invalid date '%s' (%s)", job.date, job.video_id)
+                continue
+            updates[job.video_id] = self.calculate_priority(job.station, job.year, job_date)
+
+        updated_count = self.state_manager.update_video_priorities(updates)
+        LOGGER.info("Recalculated priorities for %s video(s)", updated_count)
+
+        # Invalidate cached queues so fresh priorities are pulled from the database.
         self.stage_queues.clear()
 
     def build_job_queue(self, stage: ProcessingStage) -> "queue.PriorityQueue[Tuple[float, str, VideoJob]]":
         pending = self.state_manager.get_pending_jobs(stage)
         pq: "queue.PriorityQueue[Tuple[float, str, VideoJob]]" = queue.PriorityQueue()
         for job in pending:
+            # Apply station/year filters at queue-build time as well, so
+            # previously discovered jobs for other stations/years are not
+            # processed when a subset is requested on the CLI.
+            if not self._is_station_selected(job.station):
+                continue
+            if self.allowed_years and job.year not in self.allowed_years:
+                continue
             pq.put((-job.priority_score, job.video_id, job))
         self.stage_queues[stage] = pq
         return pq
@@ -140,13 +231,13 @@ class JobScheduler:
         year_priorities = {
             value: len(self.config.year_priority) - idx for idx, value in enumerate(self.config.year_priority)
         }
-        station_priorities = {
-            value: len(self.config.station_priority) - idx for idx, value in enumerate(self.config.station_priority)
-        }
 
         year_weight = year_priorities.get(year, 0)
-        station_key = station.upper()
-        station_weight = station_priorities.get(station_key, 0)
+        station_weight = 0
+        for idx, pattern in enumerate(self.config.station_priority):
+            if self._station_matches_pattern(station, pattern):
+                station_weight = len(self.config.station_priority) - idx
+                break
         days_from_year_start = (job_date - date_cls(year, 1, 1)).days
         date_weight = max(0, 365 - days_from_year_start) / 365
 
@@ -196,6 +287,19 @@ class JobScheduler:
                 video_id = f"{station}_{stamp}"
                 return DiscoveredVideo(video_path, video_id, station, timestamp, name)
 
+        # Support names like: Rost3_20200430_000001.avi
+        match = _STATION_UNDERSCORE_TIMESTAMP_RE.search(stem)
+        if match:
+            station = match.group("station").upper()
+            date_token = match.group("date")
+            time_token = match.group("time")
+            stamp = f"{date_token}{time_token}"
+            timestamp = _safe_parse(stamp, "%Y%m%d%H%M%S", "underscore timestamp")
+            if timestamp:
+                formatted = timestamp.strftime("%Y%m%dT%H%M%S")
+                video_id = f"{station}_{formatted}"
+                return DiscoveredVideo(video_path, video_id, station, timestamp, name)
+
         match = _STATION_COMPACT_TIMESTAMP_RE.search(stem)
         if match:
             station = match.group("station").upper()
@@ -204,6 +308,20 @@ class JobScheduler:
             if timestamp:
                 iso_stamp = f"{stamp[:8]}T{stamp[8:]}"
                 video_id = f"{station}_{iso_stamp}"
+                return DiscoveredVideo(video_path, video_id, station, timestamp, name)
+
+        # Support XProtect-like names such as:
+        #   55_ROST3_(192.168.1.130)_2025-05-23_21.00.00_22111.mp4
+        match = _STATION_XPROTECT_RE.search(stem)
+        if match:
+            station = match.group("station").upper()
+            date_token = re.sub(r"[^0-9]", "", match.group("date") or "")
+            time_token = re.sub(r"[^0-9]", "", match.group("time") or "")
+            stamp = f"{date_token}{time_token}"
+            timestamp = _safe_parse(stamp, "%Y%m%d%H%M%S", "xprotect timestamp")
+            if timestamp:
+                formatted = timestamp.strftime("%Y%m%dT%H%M%S")
+                video_id = f"{station}_{formatted}"
                 return DiscoveredVideo(video_path, video_id, station, timestamp, name)
 
         match = _STATION_HUMAN_TIMESTAMP_RE.search(stem)

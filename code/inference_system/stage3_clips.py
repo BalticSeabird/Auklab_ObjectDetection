@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import logging
+import os
+import re
 import sys
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional
 
@@ -48,6 +50,7 @@ class ClipExtractionProcessor(StageProcessor):
         self.stage_cfg = config.processing.stage3_clip_extraction
         self.model_path = Path(config.paths.detection_model)
         self.logger = logging.getLogger("stage3")
+        self.timestamp_fail_log = Path(config.paths.log_dir) / "failed_timestamp_videos.tsv"
 
     def process(self, job: VideoJob, context: WorkerContext) -> Optional[ProcessingResult]:  # noqa: ARG002
         event_csv = get_event_csv_path(self.config, job)
@@ -58,8 +61,8 @@ class ClipExtractionProcessor(StageProcessor):
             raise PermanentError(f"Source video missing for {job.video_id}: {job.filepath}")
 
         events_df = pd.read_csv(event_csv)
-        source_label = self._source_label(job)
-        filtered_events = self.filter_events(events_df, source_label=source_label)
+        # Events CSV is per-video, so no source-label filtering is needed.
+        filtered_events = self._filter_events(events_df)
         return self.process_events_for_job(job, filtered_events, event_csv_path=event_csv)
 
     def process_events_for_job(
@@ -77,9 +80,15 @@ class ClipExtractionProcessor(StageProcessor):
                 metrics=ProcessingMetrics(clips_count=0),
             )
 
-        video_start = self._extract_video_start(job.filepath)
+        video_start = self._extract_video_start(job.filepath, job.video_id)
         if video_start is None:
-            raise PermanentError(f"Unable to infer start time from filename: {job.filepath.name}")
+            self._record_failed_timestamp(job)
+            self.logger.warning(
+                "[%s] Unable to infer video start from filename '%s'; "
+                "falling back to per-event second offsets when available",
+                job.video_id,
+                job.filepath.name,
+            )
         video_duration = self._safe_video_duration(job.filepath)
 
         clips_created = 0
@@ -103,6 +112,10 @@ class ClipExtractionProcessor(StageProcessor):
 
     def _filter_events(self, events_df: pd.DataFrame, *, source_label: Optional[str] = None) -> pd.DataFrame:
         df = events_df.copy()
+        # Keep second as numeric when present; clip timing can be derived from
+        # this offset even when absolute timestamps are unavailable.
+        if "second" in df.columns:
+            df["second"] = pd.to_numeric(df["second"], errors="coerce")
         if "timestamp" not in df.columns:
             if "absolute_timestamp" in df.columns:
                 df["timestamp"] = pd.to_datetime(df["absolute_timestamp"], errors="coerce")
@@ -118,7 +131,13 @@ class ClipExtractionProcessor(StageProcessor):
             df = df[df["type"].isin(self.stage_cfg.event_types)]
         if self.stage_cfg.fish_only:
             df = df[(df["type"] == "arrival") & (df.get("arrival_with_fish", False) == True)]
-        df = df.dropna(subset=["timestamp"])
+
+        # Accept either absolute timestamp or per-video second offset.
+        # Some event CSVs only contain `second`, and those events are still
+        # fully clip-able because stage3 resolves offsets from `second` first.
+        has_timestamp = df["timestamp"].notna()
+        has_second = df.get("second", pd.Series(index=df.index, dtype=float)).notna()
+        df = df[has_timestamp | has_second]
         return df
 
     def _filter_events_for_source(self, df: pd.DataFrame, source_label: str) -> pd.DataFrame:
@@ -180,7 +199,12 @@ class ClipExtractionProcessor(StageProcessor):
             self.logger.debug("[%s] Clip already exists: %s", job.video_id, final_video_path)
             return True
 
-        overlay_text = format_overlay_text(event)
+        # Ensure overlay timestamp is populated even when events CSV has NaT.
+        # We derive it from canonical timing: video start + event offset.
+        event_for_overlay = event.copy()
+        if pd.isna(event_for_overlay.get("timestamp")) and video_start is not None:
+            event_for_overlay["timestamp"] = video_start + pd.to_timedelta(offset_seconds, unit="s")
+        overlay_text = format_overlay_text(event_for_overlay)
         temp_clip = video_out_dir / f"temp_{output_filename}"
         success = extract_clip_with_overlay(
             job.filepath,
@@ -257,10 +281,53 @@ class ClipExtractionProcessor(StageProcessor):
             return "arrival_with_fish" if has_fish else "arrival_no_fish"
         return "departure"
 
-    def _extract_video_start(self, video_path: Path) -> Optional[datetime]:
+    def _extract_video_start(self, video_path: Path, video_id: Optional[str] = None) -> Optional[datetime]:
+        def _parse_date_and_time_tokens(date_token: str, time_token: str) -> Optional[datetime]:
+            """Parse YYYYMMDD + HHMMSS and tolerate overflow in MM/SS.
+
+            Some legacy files contain malformed time tokens like 034186 where
+            seconds overflow. We normalize via timedelta math instead of
+            rejecting the timestamp.
+            """
+            if len(date_token) != 8 or len(time_token) != 6:
+                return None
+            try:
+                base_date = datetime.strptime(date_token, "%Y%m%d")
+                hours = int(time_token[:2])
+                minutes = int(time_token[2:4])
+                seconds = int(time_token[4:6])
+                return base_date + timedelta(hours=hours, minutes=minutes, seconds=seconds)
+            except ValueError:
+                return None
+
         timestamp = extract_timestamp_from_filename(str(video_path.name))
         if timestamp:
             return timestamp
+
+        # Fallback for names like Rost3_20200517_182700.avi
+        stem = video_path.stem
+        underscore_match = re.search(r"(\d{8})_(\d{6})", stem)
+        if underscore_match:
+            parsed = _parse_date_and_time_tokens(underscore_match.group(1), underscore_match.group(2))
+            if parsed:
+                return parsed
+
+        # Fallback for compact tokens like STATION_20200517182700
+        compact_match = re.search(r"(\d{14})", stem)
+        if compact_match:
+            compact = compact_match.group(1)
+            parsed = _parse_date_and_time_tokens(compact[:8], compact[8:14])
+            if parsed:
+                return parsed
+
+        # Last-resort: derive from normalized video_id (e.g. ROST3_20200517T182700)
+        if video_id:
+            id_match = re.search(r"(\d{8}T\d{6})", video_id)
+            if id_match:
+                try:
+                    return datetime.strptime(id_match.group(1), "%Y%m%dT%H%M%S")
+                except ValueError:
+                    pass
         return None
 
     def _safe_video_duration(self, video_path: Path) -> Optional[float]:
@@ -269,3 +336,27 @@ class ClipExtractionProcessor(StageProcessor):
         except Exception as exc:  # pragma: no cover - best effort
             self.logger.warning("Failed to read video duration for %s: %s", video_path, exc)
             return None
+
+    def _record_failed_timestamp(self, job: VideoJob) -> None:
+        """Append filename timestamp parse failures for later manual QA."""
+        try:
+            self.timestamp_fail_log.parent.mkdir(parents=True, exist_ok=True)
+            is_new_file = not self.timestamp_fail_log.exists()
+            header = "logged_at_utc\tvideo_id\tstation\tdate\tfilepath\tfilename\n"
+            line = (
+                f"{datetime.utcnow().isoformat()}\t{job.video_id}\t{job.station}\t"
+                f"{job.date}\t{job.filepath}\t{job.filepath.name}\n"
+            )
+            fd = os.open(
+                str(self.timestamp_fail_log),
+                os.O_CREAT | os.O_WRONLY | os.O_APPEND,
+                0o644,
+            )
+            try:
+                if is_new_file:
+                    os.write(fd, header.encode("utf-8", errors="replace"))
+                os.write(fd, line.encode("utf-8", errors="replace"))
+            finally:
+                os.close(fd)
+        except Exception as exc:  # pragma: no cover - best effort logging only
+            self.logger.debug("Failed to write timestamp failure audit line for %s: %s", job.video_id, exc)

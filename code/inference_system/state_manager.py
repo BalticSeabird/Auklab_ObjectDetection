@@ -124,6 +124,19 @@ class StateManager:
                         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                     );
 
+                    CREATE TABLE IF NOT EXISTS corrupt_videos (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        video_id TEXT NOT NULL,
+                        stage INTEGER NOT NULL,
+                        error_message TEXT,
+                        filepath TEXT,
+                        station TEXT,
+                        year INTEGER,
+                        date TEXT,
+                        recorded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        FOREIGN KEY (video_id) REFERENCES videos(video_id)
+                    );
+
                     CREATE INDEX IF NOT EXISTS idx_processing_stage_status
                     ON processing_stages(status);
 
@@ -295,6 +308,24 @@ class StateManager:
             )
             if cursor.rowcount == 0:
                 raise ValueError(f"No job found for video {video_id} stage {stage}")
+
+            # For non-retryable failures that indicate corrupt or unreadable
+            # video files, persist a row in the corrupt_videos table so they
+            # can be analyzed separately.
+            if not retryable and error_message:
+                if (
+                    "Invalid data found when processing input" in error_message
+                    or "appears corrupt or unreadable" in error_message
+                ):
+                    cursor.execute(
+                        """
+                        INSERT INTO corrupt_videos (video_id, stage, error_message, filepath, station, year, date)
+                        SELECT v.video_id, ?, ?, v.filepath, v.station, v.year, v.date
+                        FROM videos v
+                        WHERE v.video_id = ?
+                        """,
+                        (int(stage), error_message, video_id),
+                    )
             conn.commit()
 
     def return_job(self, video_id: str, stage: ProcessingStage) -> None:
@@ -421,6 +452,57 @@ class StateManager:
             for row in rows
         ]
 
+    def get_all_videos(self) -> List[VideoJob]:
+        """Return all registered videos.
+
+        Used for maintenance tasks like priority recalculation.
+        """
+        with self._connect() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT video_id, station, year, date, filename, filepath, priority_score
+                FROM videos
+                """
+            )
+            rows = cursor.fetchall()
+        return [
+            VideoJob(
+                video_id=row["video_id"],
+                station=row["station"],
+                year=row["year"],
+                date=row["date"],
+                filename=row["filename"],
+                filepath=Path(row["filepath"]),
+                priority_score=row["priority_score"],
+            )
+            for row in rows
+        ]
+
+    def update_video_priorities(self, updates: Dict[str, float]) -> int:
+        """Update priority scores for existing videos.
+
+        Args:
+            updates: Mapping of video_id -> priority_score.
+
+        Returns:
+            Number of rows updated.
+        """
+        if not updates:
+            return 0
+        with self._connect() as conn:
+            cursor = conn.cursor()
+            cursor.executemany(
+                """
+                UPDATE videos
+                SET priority_score = ?
+                WHERE video_id = ?
+                """,
+                [(float(priority), video_id) for video_id, priority in updates.items()],
+            )
+            conn.commit()
+            return cursor.rowcount
+
     def reset_stuck_jobs(self, timeout_seconds: int) -> int:
         """Requeue jobs stuck in progress for longer than the threshold."""
         threshold = datetime.utcnow() - timedelta(seconds=timeout_seconds)
@@ -435,6 +517,35 @@ class StateManager:
                 """,
                 (StageStatus.PENDING.value, StageStatus.IN_PROGRESS.value, cutoff),
             )
+            conn.commit()
+            return cursor.rowcount
+
+    def reset_failed_jobs(self, *, stage: Optional[ProcessingStage] = None) -> int:
+        """Requeue failed jobs back to pending state.
+
+        Useful for troubleshooting after code/config fixes where previously
+        failed jobs should be retried without rebuilding discovery state.
+        """
+        with self._connect() as conn:
+            cursor = conn.cursor()
+            if stage is None:
+                cursor.execute(
+                    """
+                    UPDATE processing_stages
+                    SET status = ?, worker_id = NULL, started_at = NULL, completed_at = NULL
+                    WHERE status = ?
+                    """,
+                    (StageStatus.PENDING.value, StageStatus.FAILED.value),
+                )
+            else:
+                cursor.execute(
+                    """
+                    UPDATE processing_stages
+                    SET status = ?, worker_id = NULL, started_at = NULL, completed_at = NULL
+                    WHERE status = ? AND stage = ?
+                    """,
+                    (StageStatus.PENDING.value, StageStatus.FAILED.value, int(stage)),
+                )
             conn.commit()
             return cursor.rowcount
 

@@ -137,9 +137,15 @@ class WorkerPoolManager:
         specs: List[WorkerSpec] = []
         gpu_ids = self.config.hardware.gpus.device_ids[: self.config.hardware.gpus.count]
 
+        workers_per_gpu = self.config.hardware.gpus.workers_per_gpu
         if ProcessingStage.STAGE1 in self.processors:
             for gpu_id in gpu_ids:
-                specs.append(WorkerSpec(worker_id=f"gpu{gpu_id}-stage1", stage=ProcessingStage.STAGE1, gpu_id=gpu_id))
+                for worker_idx in range(workers_per_gpu):
+                    specs.append(WorkerSpec(
+                        worker_id=f"gpu{gpu_id}-stage1-w{worker_idx}",
+                        stage=ProcessingStage.STAGE1,
+                        gpu_id=gpu_id,
+                    ))
 
         if ProcessingStage.STAGE2 in self.processors:
             for idx in range(self.config.hardware.cpus.worker_count):

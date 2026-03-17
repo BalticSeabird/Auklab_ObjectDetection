@@ -69,6 +69,9 @@ except ImportError:
     print("Warning: ultralytics not installed. YOLO detection will be disabled.")
     print("Install with: pip install ultralytics")
 
+
+_YOLO_MODEL_CACHE = {}
+
 def extract_date_from_csv_path(csv_path: str) -> Optional[str]:
     """Extract date string (YYYYMMDD) from CSV path or filename."""
     basename = os.path.basename(csv_path)
@@ -188,8 +191,12 @@ def run_yolo_on_clip(video_path: Path, model_path: Path, output_video_path: Path
         return False
     
     try:
-        # Load YOLO model
-        model = YOLO(str(model_path))
+        # Reuse loaded model inside the same worker process.
+        model_key = str(model_path.resolve())
+        model = _YOLO_MODEL_CACHE.get(model_key)
+        if model is None:
+            model = YOLO(model_key)
+            _YOLO_MODEL_CACHE[model_key] = model
         
         # Open video
         cap = cv2.VideoCapture(str(video_path))
@@ -223,12 +230,10 @@ def run_yolo_on_clip(video_path: Path, model_path: Path, output_video_path: Path
             # Draw bounding boxes
             annotated_frame = results[0].plot()
             
-            # Add event info overlay
+            # Add event info overlay at the bottom of the frame
             text_escaped = overlay_text.replace(':', ' ')
-            cv2.putText(annotated_frame, text_escaped, (10, 30), 
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2, cv2.LINE_AA)
-            cv2.rectangle(annotated_frame, (5, 5), (width - 5, 45), (0, 0, 0), -1)
-            cv2.putText(annotated_frame, text_escaped, (10, 30), 
+            cv2.rectangle(annotated_frame, (5, height - 45), (width - 5, height - 5), (0, 0, 0), -1)
+            cv2.putText(annotated_frame, text_escaped, (10, height - 15), 
                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2, cv2.LINE_AA)
             
             # Write frame
@@ -319,38 +324,138 @@ def extract_clip_with_overlay(video_path: Path, start_time: float, end_time: flo
     
     # Format times for ffmpeg
     start_str = format_seconds_to_time(start_time)
-    duration = end_time - start_time
+    duration = max(0.05, end_time - start_time)
     
     # Escape text for ffmpeg drawtext filter
     # Replace single quotes with '\'' and escape special chars
     text_escaped = overlay_text.replace("'", "'\\''").replace(":", "\\:")
     
-    # Build ffmpeg command with text overlay
-    # Using drawtext filter to add text at top of video
-    cmd = [
+    drawtext_filter = (
+        f"drawtext=text='{text_escaped}':fontcolor=white:fontsize=32:"
+        "box=1:boxcolor=black@0.7:boxborderw=10:x=10:y=h-th-10"
+    )
+
+    common = [
         'ffmpeg',
+        '-hide_banner',
+        '-loglevel', 'error',
+        '-nostdin',
         '-y',  # Overwrite output
-        '-ss', start_str,  # Start time
-        '-i', str(video_path),  # Input video
-        '-t', str(duration),  # Duration
-        '-vf', f"drawtext=text='{text_escaped}':fontcolor=white:fontsize=32:box=1:boxcolor=black@0.7:boxborderw=10:x=10:y=10",
-        '-c:v', 'libx264',  # Video codec
-        '-preset', 'fast',  # Encoding speed
-        '-crf', '23',  # Quality (lower = better)
-        '-c:a', 'aac',  # Audio codec
-        '-b:a', '128k',  # Audio bitrate
-        str(output_path)
     ]
-    
-    try:
-        # Run ffmpeg with suppressed output
-        result = subprocess.run(cmd, check=True, capture_output=True, text=True)
+    output_encode = [
+        '-vf', drawtext_filter,
+        '-c:v', 'libx264',
+        '-preset', 'fast',
+        '-crf', '23',
+        '-movflags', '+faststart',
+    ]
+
+    def _stderr_tail(stderr_text: str, lines: int = 8) -> str:
+        cleaned = [line.strip() for line in stderr_text.splitlines() if line.strip()]
+        return "\n".join(cleaned[-lines:]) if cleaned else "(no stderr output)"
+
+    def _run_attempts(
+        input_video: Path,
+        *,
+        allow_audio: bool,
+        source_tag: str,
+    ) -> tuple[bool, str, list[str], str]:
+        attempts = [
+            (
+                "fast-seek+audio",
+                common
+                + ['-ss', start_str, '-i', str(input_video), '-t', str(duration)]
+                + output_encode
+                + ['-c:a', 'aac', '-b:a', '128k', str(output_path)],
+            ),
+            (
+                "accurate-seek+audio",
+                common
+                + ['-i', str(input_video), '-ss', start_str, '-t', str(duration)]
+                + output_encode
+                + ['-c:a', 'aac', '-b:a', '128k', str(output_path)],
+            ),
+            (
+                "accurate-seek+no-audio",
+                common
+                + ['-i', str(input_video), '-ss', start_str, '-t', str(duration)]
+                + output_encode
+                + ['-an', str(output_path)],
+            ),
+        ]
+        if not allow_audio:
+            attempts = [item for item in attempts if "+audio" not in item[0]]
+
+        last_error = ""
+        failed_strategies: list[str] = []
+        for strategy, cmd in attempts:
+            try:
+                subprocess.run(cmd, check=True, capture_output=True, text=True)
+                return True, "", failed_strategies, strategy
+            except subprocess.CalledProcessError as e:
+                last_error = _stderr_tail((e.stderr or "").strip())
+                failed_strategies.append(strategy)
+                if output_path.exists():
+                    output_path.unlink()
+        return False, last_error, failed_strategies, ""
+
+    success, last_stderr, failed_primary, success_strategy = _run_attempts(
+        video_path,
+        allow_audio=True,
+        source_tag=video_path.name,
+    )
+    if success:
+        if failed_primary:
+            print(
+                f"  Info: ffmpeg recovered for {output_path.name} using '{success_strategy}' "
+                f"after failed strategies: {', '.join(failed_primary)}"
+            )
         return True
+
+    # Final fallback for files with corrupt/problematic audio streams:
+    # create a video-only remux (-c:v copy -an) and re-attempt extraction.
+    repair_path = output_path.parent / f".repair_{video_path.stem}_{output_path.stem}.mp4"
+    repair_cmd = common + [
+        '-fflags', '+genpts',
+        '-i', str(video_path),
+        '-map', '0:v:0',
+        '-c:v', 'copy',
+        '-an',
+        str(repair_path),
+    ]
+    try:
+        print(f"  Info: attempting video-only remux repair for {video_path.name}")
+        subprocess.run(repair_cmd, check=True, capture_output=True, text=True)
+        repaired_success, repaired_stderr, failed_repair, repair_success_strategy = _run_attempts(
+            repair_path,
+            allow_audio=False,
+            source_tag=f"repaired:{repair_path.name}",
+        )
+        if repaired_success:
+            if failed_primary or failed_repair:
+                failed_all = failed_primary + failed_repair
+                print(
+                    f"  Info: ffmpeg recovered via remux repair for {output_path.name} "
+                    f"using '{repair_success_strategy}' after failed strategies: {', '.join(failed_all)}"
+                )
+            return True
+        if repaired_stderr:
+            last_stderr = repaired_stderr
     except subprocess.CalledProcessError as e:
-        print(f"  Error: ffmpeg failed for {output_path.name}")
-        if e.stderr:
-            print(f"  {e.stderr[:200]}")  # Show first 200 chars of error
-        return False
+        last_stderr = _stderr_tail((e.stderr or "").strip())
+        print(f"  Warning: video-only remux repair failed for {video_path.name}")
+    finally:
+        if repair_path.exists():
+            repair_path.unlink()
+
+    print(f"  Error: ffmpeg failed for {output_path.name}")
+    print(f"  Source: {video_path}")
+    print(f"  Clip window: start={start_time:.3f}s end={end_time:.3f}s duration={duration:.3f}s")
+    if last_stderr:
+        print("  ffmpeg stderr (tail):")
+        for line in last_stderr.splitlines():
+            print(f"    {line}")
+    return False
 
 def format_event_filename(event_id_from_csv: Optional[str] = None) -> str:
     """
@@ -368,7 +473,18 @@ def format_event_filename(event_id_from_csv: Optional[str] = None) -> str:
 def format_overlay_text(event: pd.Series) -> str:
     """Create overlay text for video clip."""
     event_type = event['type'].upper()
-    timestamp = event['timestamp'].strftime('%Y-%m-%d %H:%M:%S')
+    timestamp_value = event.get('timestamp', pd.NaT)
+    timestamp = "unknown"
+    if pd.notna(timestamp_value):
+        try:
+            if hasattr(timestamp_value, 'strftime'):
+                timestamp = timestamp_value.strftime('%Y-%m-%d %H:%M:%S')
+            else:
+                parsed = pd.to_datetime(timestamp_value, errors='coerce')
+                if pd.notna(parsed):
+                    timestamp = parsed.strftime('%Y-%m-%d %H:%M:%S')
+        except Exception:
+            timestamp = "unknown"
     event_id = event.get('event_id', 'unknown')
     
     text_parts = [

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import re
 from datetime import date, datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -31,6 +32,7 @@ class SystemSettings(BaseModel):
 class GPUSettings(BaseModel):
     count: PositiveInt
     device_ids: List[NonNegativeInt]
+    workers_per_gpu: PositiveInt = 1
 
     @model_validator(mode="after")
     def validate_device_ids(self) -> "GPUSettings":
@@ -120,6 +122,33 @@ class PriorityConfig(BaseModel):
     years: List[int]
     stations: List[str]
 
+    @field_validator("stations", mode="before")
+    @classmethod
+    def normalize_station_list(cls, value: Any) -> List[str]:
+        """Accept flexible station list inputs and normalize them.
+
+        Handles common config typos like a single entry containing
+        space-separated values (e.g. ["TRI3 Triangle3"]).
+        """
+        if value is None:
+            return []
+        if isinstance(value, str):
+            # Support comma-separated or whitespace-separated station strings.
+            tokens = re.split(r"[\s,]+", value.strip())
+            return [token for token in tokens if token]
+        if isinstance(value, list):
+            normalized: List[str] = []
+            for item in value:
+                if isinstance(item, str):
+                    # Split accidental combined entries while preserving normal
+                    # single tokens like "TRI3".
+                    parts = re.split(r"[\s,]+", item.strip())
+                    normalized.extend([part for part in parts if part])
+                else:
+                    normalized.append(str(item))
+            return normalized
+        return [str(value)]
+
 
 class DateRangeFilter(BaseModel):
     start: Optional[date] = None
@@ -142,6 +171,10 @@ class DateRangeFilter(BaseModel):
 
 class FilterConfig(BaseModel):
     date_range: Optional[DateRangeFilter] = None
+    # Stations that should be completely ignored when discovering/building the
+    # video database. Matching is done case-insensitively and with
+    # substring/partial matching (e.g. "TRI" will ignore TRI3, TRI6, etc.).
+    ignored_stations: List[str] = Field(default_factory=list)
 
 
 class ErrorHandlingConfig(BaseModel):
@@ -274,7 +307,10 @@ def generate_default_config() -> Dict[str, Any]:
             "years": [2025, 2024, 2023],
             "stations": ["BONDEN3", "BONDEN6", "TRI3", "FAR3", "FAR6", "ROST2", "ROST6"],
         },
-        "filters": {"date_range": {"start": "2025-01-01", "end": "2025-12-31"}},
+        "filters": {
+            "date_range": {"start": "2025-01-01", "end": "2025-12-31"},
+            "ignored_stations": [],
+        },
         "error_handling": {
             "max_retries": 2,
             "retry_delay_seconds": 60,

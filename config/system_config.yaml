@@ -7,15 +7,16 @@ hardware:
     device_ids:
     - 0
     - 1
+    workers_per_gpu: 2
   cpus:
-    worker_count: 100
+    worker_count: 90
 paths:
   video_roots:
   - ../../../../../../mnt/BSP_NAS2/Video
   - ../../../../../../mnt/BSP_NAS2_vol3/Video
   - ../../../../../../mnt/BSP_NAS2_vol4/Video
   inference_output: ../../../../../../mnt/BSP_NAS2_work/auklab_model/inference/
-  event_analysis_output: ../../../../../../mnt/BSP_NAS2_work/auklab_model/summarized_inference/
+  event_analysis_output: ../../../../../../mnt/BSP_NAS2_work/auklab_model/event_data/
   clips_output: ../../../../../../mnt/BSP_NAS2_work/auklab_model/event_data/
   detection_model: models/auklab_yolo26x_seabirdfish_6080_v1.pt
   state_db: data/processing_state.db
@@ -42,7 +43,6 @@ processing:
     clip_after: 10
     event_types:
     - arrival
-    - departure
     fish_only: false
     video_extensions:
     - .mkv
@@ -54,31 +54,23 @@ processing:
       preset: fast
 priorities:
   years:
-  - 2025
-  - 2024
-  - 2023
-  - 2022
-  - 2021
   - 2020
-  - 2019
-  stations:
-  - BONDEN3
-  - BONDEN6
-  - TRI3
-  - FAR3
-  - TRI6
-  - FAR6
-  - ROST2
-  - ROST3
-  - ROST6
-  - BONDEN2
-  - BONDEN5
-  - ROST4
-  - ROST5
+  - 2021
+  stations: [ROST3, TRI3, FAR3]
+  #- TRI6
+  #- TRI3
+  #- FAR3
+  #- FARALLON3
+  #- BONDEN5
+  #- FAR6
 filters:
   date_range:
-    start: '2025-01-01'
-    end: '2025-09-01'
+    start: '2019-05-01'
+    end: '2025-07-30'
+  # Stations listed here are completely ignored when discovering videos
+  # and building the processing database. Matching is case-insensitive
+  # and uses substring logic, so e.g. "TRI" will ignore TRI3, TRI6, etc.
+  ignored_stations: [OVERVIEW, TRI1, TRI2, TRI4, TRI5, FAR1, FAR2, FAR4, FAR5, BJORN3TRI3, EAGLE, BJORN, FAR6BONDEN6, TLZOOM, ROST3SIDE, EJDER, SCALE, TOMS, FAR3_2, BONDEN8, BJORN8, BJORN7, IOM5, TRI7, IOM4, BONDEN7, FAR8, TRI7, TRI8, TRI9, TLOVER, SEAL, CAMERA, '2022', FAR3SIDE, FAR3_CUTE, TORDMULE3, BONDEN1, BONDEN2, BONDEN3, BONDEN4, CUTE, A1, GROTTAN]
 error_handling:
   max_retries: 2
   retry_delay_seconds: 60

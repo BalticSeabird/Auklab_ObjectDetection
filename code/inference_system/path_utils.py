@@ -25,17 +25,20 @@ def get_detection_csv_path(config: Config, job: VideoJob) -> Path:
 
 
 def get_event_output_dir(config: Config, job: VideoJob) -> Path:
-    return (
-        Path(config.paths.event_analysis_output)
-        / str(job.year)
-        / _model_identifier(config)
-        / job.station
-        / _compact_date(job)
-    )
+    """Directory for per-video event CSVs used by the integrated pipeline.
+
+    Events are stored alongside clips under the event_data hierarchy so that
+    everything for a given station/date lives under a single root:
+
+        {clips_output}/{station}/{YYYYMMDD}/events/
+    """
+    base = Path(config.paths.clips_output)
+    return base / job.station / _compact_date(job) / "events"
 
 
 def get_event_csv_path(config: Config, job: VideoJob) -> Path:
-    return get_event_output_dir(config, job) / "csv" / f"daily_events_{_compact_date(job)}.csv"
+    """Return the per-video events CSV path (one file per source video)."""
+    return get_event_output_dir(config, job) / f"{job.filepath.stem}_events.csv"
 
 
 def get_clips_output_dir(config: Config, job: VideoJob, subfolder: str) -> Path:

@@ -30,6 +30,7 @@ def extract_timestamp_from_filename(csv_path):
     """
     Extract timestamp from filename patterns:
     - Standard: FAR3_20250630T122002_raw.csv
+    - Underscore: Rost3_20200519_113548.avi
     - XProtect: 12_BONDEN3_(192.168.1.128)_2025-06-16_00.00.00_64803_raw.csv
     
     Returns datetime object representing the start time of the video
@@ -47,6 +48,18 @@ def extract_timestamp_from_filename(csv_path):
             return datetime.strptime(timestamp_str, '%Y%m%dT%H%M%S')
         except ValueError:
             print(f"Warning: Could not parse timestamp {timestamp_str} from filename")
+            return None
+
+    # Try underscore format: YYYYMMDD_HHMMSS
+    underscore_pattern = r'(\d{8})_(\d{6})'
+    match = re.search(underscore_pattern, filename)
+
+    if match:
+        try:
+            date_part, time_part = match.groups()
+            return datetime.strptime(f"{date_part}{time_part}", '%Y%m%d%H%M%S')
+        except ValueError:
+            print("Warning: Could not parse underscore timestamp from filename")
             return None
     
     # Try XProtect format: YYYY-MM-DD_HH.MM.SS

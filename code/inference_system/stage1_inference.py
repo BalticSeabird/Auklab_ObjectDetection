@@ -122,8 +122,17 @@ class VideoInferenceProcessor(StageProcessor):
     def _run_inference(self, video_path: Path, model: YOLO) -> Dict[str, float | int | List[List[float]]]:
         try:
             container = av.open(str(video_path))
-        except av.AVError as exc:  # type: ignore
-            raise RecoverableError(f"Failed to open video {video_path}: {exc}") from exc
+        except av.error.FFmpegError as exc:
+            message = str(exc)
+            if (
+                "Invalid data found when processing input" in message
+                or "End of file" in message
+                or "EOF" in message
+            ):
+                raise PermanentError(
+                    f"Video file appears corrupt, truncated, or unreadable and will be skipped: {video_path}: {message}"
+                ) from exc
+            raise RecoverableError(f"Failed to open video {video_path}: {message}") from exc
 
         stream = container.streams.video[0]
         stream.thread_type = "AUTO"
@@ -175,7 +184,7 @@ class VideoInferenceProcessor(StageProcessor):
                         flush_batch()
                 frame_count += 1
             flush_batch()
-        except av.AVError as exc:  # type: ignore
+        except av.error.FFmpegError as exc:
             raise RecoverableError(f"Decoding failed for {video_path}: {exc}") from exc
         finally:
             container.close()

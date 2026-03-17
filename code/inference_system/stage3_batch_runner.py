@@ -218,7 +218,12 @@ def _discover_batches(
         logging.warning("Event analysis root does not exist: %s", root)
         return batches
 
-    allowed = {station.upper() for station in allowed_stations} if allowed_stations else None
+    # Station filters from CLI (substring/partial match) and global ignore
+    # list from config.filters.ignored_stations.
+    allowed_patterns = [station.upper() for station in allowed_stations] if allowed_stations else []
+    ignored_patterns: List[str] = []
+    if config.filters and getattr(config.filters, "ignored_stations", None):
+        ignored_patterns = [s.upper() for s in config.filters.ignored_stations]
 
     for year_dir in sorted(root.iterdir()):
         if not year_dir.is_dir() or not year_dir.name.isdigit():
@@ -230,7 +235,11 @@ def _discover_batches(
             if not station_dir.is_dir():
                 continue
             station = station_dir.name.upper()
-            if allowed and station not in allowed:
+            # Apply ignore list first
+            if any(p and p in station for p in ignored_patterns):
+                continue
+            # Then apply optional allow filters using substring matching
+            if allowed_patterns and not any(p and p in station for p in allowed_patterns):
                 continue
             for date_dir in sorted(station_dir.iterdir()):
                 if not date_dir.is_dir():

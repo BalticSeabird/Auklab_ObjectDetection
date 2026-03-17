@@ -53,9 +53,9 @@ Stage 3 now runs in a standalone batch tool that groups events by station/day be
 ```bash
 PYTHONPATH=code python -m inference_system.stage3_batch_runner \
    --config config/system_config.yaml \
-   --stations TRI3 \
-   --start-date 2022-06-01 \
-   --end-date 2022-06-01
+   --stations FAR3 \
+   --start-date 2024-06-01 \
+   --end-date 2024-07-20
 ```
 
 - The runner ingests the summarized daily CSVs from stage 2, discovers matching batches, and tracks progress in `paths.stage3_state_db` (defaults to `data/stage3_processing_state.db`).
@@ -73,4 +73,7 @@ PYTHONPATH=code python -m inference_system.main_orchestrator --config config/sys
 PYTHONPATH=code python -m inference_system.main_orchestrator --config config/system_config.yaml
 
 # Run everything without rediscovery
-PYTHONPATH=code python -m inference_system.main_orchestrator --config config/system_config.yaml --skip-discovery
+PYTHONPATH=code python -m inference_system.main_orchestrator --config config/system_config.yaml --skip-discovery --debug
+
+# Debug
+PYTHONPATH=code python -m inference_system.main_orchestrator --config config/system_config.yaml --skip-discovery --log-level DEBUG
