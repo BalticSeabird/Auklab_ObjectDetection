@@ -8,10 +8,15 @@ def build_ffmpeg_command(
     rtsp_url: str,
     output_pattern: str,
     segment_time: int = 60,
+    segment_format: str = "mp4",
+    include_audio: bool = True,
     loglevel: str = "info",
 ):
     """
-    Build an ffmpeg command for RTSP segmentation with improved timestamp handling.
+    Build an ffmpeg command for RTSP segmentation optimized for stable timestamps.
+
+    The command avoids transcoding and keeps the original video bitstream,
+    while preferring source packet timing over wallclock-derived timestamps.
     """
 
     cmd = [
@@ -20,33 +25,46 @@ def build_ffmpeg_command(
         "-loglevel", loglevel,
 
         # --- Input handling ---
-        "-fflags", "+genpts",                     # Generate missing PTS
+        "-fflags", "+genpts+igndts+discardcorrupt",  # Stabilize/fix missing packet timing
         "-rtsp_transport", "tcp",
-        "-allowed_media_types", "video+audio",
-        "-use_wallclock_as_timestamps", "1",
+        "-allowed_media_types", "video+audio" if include_audio else "video",
+        # Use camera/source timestamps; wallclock timestamps often introduce VFR jitter.
         "-max_delay", "100000",
 
         "-i", rtsp_url,
 
         # --- Stream mapping ---
         "-map", "0:v:0",
-        "-map", "0:a:0?",                         # optional audio
 
         # --- Copy streams (fast, non-destructive) ---
         "-c:v", "copy",
-        "-c:a", "copy",
+        "-copytb", "1",
+        "-fps_mode", "passthrough",
+        "-avoid_negative_ts", "make_zero",
 
         # --- Segmentation ---
         "-f", "segment",
         "-reset_timestamps", "1",
         "-segment_time", str(segment_time),
-        "-segment_atclocktime", "1",
-        "-segment_format", "mkv",
+        "-segment_time_delta", "0.05",
+        "-segment_atclocktime", "0",
+        "-segment_format", segment_format,
+    ]
 
+    if include_audio:
+        cmd.extend(["-map", "0:a:0?", "-c:a", "copy"])
+    else:
+        cmd.extend(["-an"])
+
+    if segment_format == "mp4":
+        # Keep each segment self-contained and quickly readable.
+        cmd.extend(["-segment_format_options", "movflags=+faststart"])
+
+    cmd.extend([
         # --- Output naming ---
         "-strftime", "1",
         output_pattern,
-    ]
+    ])
 
     return cmd
 
@@ -86,13 +104,15 @@ if __name__ == "__main__":
     output_dir = Path("./segments")
     output_dir.mkdir(exist_ok=True)
 
-    fname_pattern = str(output_dir / "%Y%m%d_%H%M%S.mkv")
+    fname_pattern = str(output_dir / "%Y%m%d_%H%M%S.mp4")
 
     cmd = build_ffmpeg_command(
         ffmpeg_path=ffmpeg_path,
         rtsp_url=rtsp_url,
         output_pattern=fname_pattern,
         segment_time=60,
+        segment_format="mp4",
+        include_audio=True,
         loglevel="info",
     )
 
