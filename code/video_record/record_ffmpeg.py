@@ -82,7 +82,7 @@ def run_ffmpeg(cmd):
 
 if __name__ == "__main__":
     ffmpeg_path = "ffmpeg"
-    rtsp_url = "rtsp://your_camera_stream"
+    rtsp_url = "rtsp://admin:Auklab2008@169.254.28.178:554/Streaming/Channels/101"
     output_dir = Path("./segments")
     output_dir.mkdir(exist_ok=True)
 
