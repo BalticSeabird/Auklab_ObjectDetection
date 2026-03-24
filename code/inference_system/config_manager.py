@@ -60,6 +60,7 @@ class PathsConfig(BaseModel):
     detection_model: Path
     state_db: Path
     stage3_state_db: Path
+    events_db_root: Path = Path("data/events_db")
     log_dir: Path
 
     @model_validator(mode="after")
@@ -108,14 +109,29 @@ class Stage3Config(BaseModel):
     clip_after: NonNegativeInt
     event_types: List[str] = Field(default_factory=lambda: ["arrival", "departure"])
     fish_only: bool = False
+    worker_count: PositiveInt = 4
     video_extensions: List[str] = Field(default_factory=lambda: [".mkv", ".mp4", ".avi"])
     compression: CompressionConfig = Field(default_factory=CompressionConfig)
+
+
+class Stage4Config(BaseModel):
+    worker_count: PositiveInt = 4
+    min_bird_frames: PositiveInt = 8
+    min_centroid_displacement: float = Field(default=20.0, ge=0.0)
+    min_mean_motion: float = Field(default=2.0, ge=0.0)
+    min_fish_frames: PositiveInt = 3
+    fish_early_presence_ratio: float = Field(default=0.15, ge=0.0, le=1.0)
+    use_model: bool = False
+    model_path: Path = Path("models/stage4/tri3_fish_arrival_model.json")
+    model_threshold: float = Field(default=0.5, ge=0.0, le=1.0)
+    rule_version: str = "v1"
 
 
 class ProcessingConfig(BaseModel):
     stage1_video_inference: Stage1Config
     stage2_event_detection: Stage2Config
     stage3_clip_extraction: Stage3Config
+    stage4_post_classification: Stage4Config = Field(default_factory=Stage4Config)
 
 
 class PriorityConfig(BaseModel):
@@ -278,6 +294,7 @@ def generate_default_config() -> Dict[str, Any]:
             "detection_model": "models/auklab_model_xlarge_combined_6080_v1.pt",
             "state_db": "data/processing_state.db",
             "stage3_state_db": "data/stage3_processing_state.db",
+            "events_db_root": "data/events_db",
             "log_dir": "logs",
         },
         "processing": {
@@ -299,8 +316,21 @@ def generate_default_config() -> Dict[str, Any]:
                 "clip_after": 10,
                 "event_types": ["arrival", "departure"],
                 "fish_only": False,
+                "worker_count": 4,
                 "video_extensions": [".mkv", ".mp4", ".avi"],
                 "compression": {"enabled": True, "crf": 28, "preset": "fast"},
+            },
+            "stage4_post_classification": {
+                "worker_count": 4,
+                "min_bird_frames": 8,
+                "min_centroid_displacement": 20.0,
+                "min_mean_motion": 2.0,
+                "min_fish_frames": 3,
+                "fish_early_presence_ratio": 0.15,
+                "use_model": False,
+                "model_path": "models/stage4/tri3_fish_arrival_model.json",
+                "model_threshold": 0.5,
+                "rule_version": "v1",
             },
         },
         "priorities": {

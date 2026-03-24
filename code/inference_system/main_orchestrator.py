@@ -17,6 +17,8 @@ from .config_manager import load_config
 from .job_scheduler import JobScheduler
 from .stage1_inference import VideoInferenceProcessor
 from .stage2_events import EventDetectionProcessor
+from .stage3_clips import ClipExtractionProcessor
+from .stage4_postclassification import Stage4PostClassificationProcessor
 from .state_manager import ProcessingStage, StateManager
 from .worker_pool import WorkerPoolManager
 
@@ -97,6 +99,10 @@ def main(argv: Optional[List[str]] = None) -> None:
         logging.info("Reset %s stuck stage entries", reset_count)
         failed_reset = state_mgr.reset_failed_jobs(stage=ProcessingStage.STAGE2)
         logging.info("Reset %s failed stage2 entries for retry", failed_reset)
+        failed_reset_stage3 = state_mgr.reset_failed_jobs(stage=ProcessingStage.STAGE3)
+        logging.info("Reset %s failed stage3 entries for retry", failed_reset_stage3)
+        failed_reset_stage4 = state_mgr.reset_failed_jobs(stage=ProcessingStage.STAGE4)
+        logging.info("Reset %s failed stage4 entries for retry", failed_reset_stage4)
 
     scheduler = JobScheduler(
         config,
@@ -121,6 +127,8 @@ def main(argv: Optional[List[str]] = None) -> None:
     processors = {
         ProcessingStage.STAGE1: VideoInferenceProcessor(config),
         ProcessingStage.STAGE2: EventDetectionProcessor(config),
+        ProcessingStage.STAGE3: ClipExtractionProcessor(config),
+        ProcessingStage.STAGE4: Stage4PostClassificationProcessor(config),
     }
 
     worker_pool = WorkerPoolManager(config, state_mgr, scheduler, processors)

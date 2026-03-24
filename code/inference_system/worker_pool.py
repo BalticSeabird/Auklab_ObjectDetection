@@ -151,6 +151,14 @@ class WorkerPoolManager:
             for idx in range(self.config.hardware.cpus.worker_count):
                 specs.append(WorkerSpec(worker_id=f"cpu{idx}-stage2", stage=ProcessingStage.STAGE2))
 
+        if ProcessingStage.STAGE3 in self.processors:
+            for idx in range(self.config.processing.stage3_clip_extraction.worker_count):
+                specs.append(WorkerSpec(worker_id=f"cpu{idx}-stage3", stage=ProcessingStage.STAGE3))
+
+        if ProcessingStage.STAGE4 in self.processors:
+            for idx in range(self.config.processing.stage4_post_classification.worker_count):
+                specs.append(WorkerSpec(worker_id=f"cpu{idx}-stage4", stage=ProcessingStage.STAGE4))
+
         if not specs:
             raise ValueError("No worker specs generated. Ensure processors are provided for at least one stage.")
         return specs

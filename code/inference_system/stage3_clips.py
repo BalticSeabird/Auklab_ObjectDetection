@@ -28,7 +28,8 @@ from postprocess.extract_event_clips import (  # type: ignore  # noqa: E402
 )
 
 from .config_manager import Config
-from .path_utils import get_clips_output_dir, get_event_csv_path
+from .event_database import EventDatabase
+from .path_utils import get_clips_output_dir
 from .state_manager import VideoJob
 from .worker_pool import (
     PermanentError,
@@ -53,32 +54,54 @@ class ClipExtractionProcessor(StageProcessor):
         self.timestamp_fail_log = Path(config.paths.log_dir) / "failed_timestamp_videos.tsv"
 
     def process(self, job: VideoJob, context: WorkerContext) -> Optional[ProcessingResult]:  # noqa: ARG002
-        event_csv = get_event_csv_path(self.config, job)
-        if not event_csv.exists():
-            raise RecoverableError(f"Events CSV missing for {job.video_id}: {event_csv}")
+        event_db = EventDatabase.for_station(self.config, job.station)
+        event_db.initialize()
+        events_df = event_db.fetch_events_for_video(station=job.station, video_id=job.video_id)
+        events_df = self._normalize_event_columns(events_df)
 
         if not job.filepath.exists():
             raise PermanentError(f"Source video missing for {job.video_id}: {job.filepath}")
 
-        events_df = pd.read_csv(event_csv)
-        # Events CSV is per-video, so no source-label filtering is needed.
         filtered_events = self._filter_events(events_df)
-        return self.process_events_for_job(job, filtered_events, event_csv_path=event_csv)
+        return self.process_events_for_job(job, filtered_events)
+
+    @staticmethod
+    def _normalize_event_columns(events_df: pd.DataFrame) -> pd.DataFrame:
+        if events_df.empty:
+            return events_df
+        df = events_df.copy()
+        if "event_type" in df.columns and "type" not in df.columns:
+            df["type"] = df["event_type"]
+        if "type" not in df.columns:
+            # Legacy / partially migrated rows may not have explicit type.
+            # Infer when possible from event_id suffix, else keep empty.
+            if "event_id" in df.columns:
+                event_ids = df["event_id"].astype(str).str.lower()
+                inferred = pd.Series(index=df.index, dtype=object)
+                inferred[event_ids.str.endswith("_arr")] = "arrival"
+                inferred[event_ids.str.endswith("_dep")] = "departure"
+                df["type"] = inferred
+            else:
+                df["type"] = pd.Series(index=df.index, dtype=object)
+        if "arrival_with_fish_stage2" in df.columns and "arrival_with_fish" not in df.columns:
+            df["arrival_with_fish"] = df["arrival_with_fish_stage2"].fillna(0).astype(int)
+        return df
 
     def process_events_for_job(
         self,
         job: VideoJob,
         events_df: pd.DataFrame,
-        *,
-        event_csv_path: Path,
     ) -> ProcessingResult:
         """Generate clips for the subset of events that belong to the provided job."""
         if events_df.empty:
             self.logger.info("[%s] No events to clip", job.video_id)
             return ProcessingResult(
-                metadata={"clips": 0, "events_csv": str(event_csv_path)},
+                metadata={"clips": 0},
                 metrics=ProcessingMetrics(clips_count=0),
             )
+
+        event_db = EventDatabase.for_station(self.config, job.station)
+        event_db.initialize()
 
         video_start = self._extract_video_start(job.filepath, job.video_id)
         if video_start is None:
@@ -94,14 +117,13 @@ class ClipExtractionProcessor(StageProcessor):
         clips_created = 0
         clips_failed = 0
         for _, event in events_df.iterrows():
-            success = self._process_event(job, event, video_start, video_duration)
+            success = self._process_event(job, event, video_start, video_duration, event_db)
             if success:
                 clips_created += 1
             else:
                 clips_failed += 1
 
         metadata = {
-            "events_csv": str(event_csv_path),
             "clips_created": clips_created,
             "clips_failed": clips_failed,
         }
@@ -128,9 +150,15 @@ class ClipExtractionProcessor(StageProcessor):
             df = self._filter_events_for_source(df, source_label)
 
         if self.stage_cfg.event_types:
-            df = df[df["type"].isin(self.stage_cfg.event_types)]
+            if "type" in df.columns:
+                df = df[df["type"].isin(self.stage_cfg.event_types)]
+            else:
+                self.logger.warning("Events data missing 'type' column; skipping event-type filter")
         if self.stage_cfg.fish_only:
-            df = df[(df["type"] == "arrival") & (df.get("arrival_with_fish", False) == True)]
+            if "type" in df.columns:
+                df = df[(df["type"] == "arrival") & (df.get("arrival_with_fish", False) == True)]
+            else:
+                self.logger.warning("Events data missing 'type' column; skipping fish_only filter")
 
         # Accept either absolute timestamp or per-video second offset.
         # Some event CSVs only contain `second`, and those events are still
@@ -168,13 +196,31 @@ class ClipExtractionProcessor(StageProcessor):
         event: pd.Series,
         video_start: datetime,
         video_duration: Optional[float],
+        event_db: EventDatabase,
     ) -> bool:
+        event_id = str(event.get("event_id", ""))
         offset_seconds = self._resolve_event_offset(event, video_start)
         if offset_seconds is None:
             self.logger.warning("[%s] Unable to determine offset for event", job.video_id)
+            if event_id:
+                event_db.update_stage3_artifacts(
+                    station=job.station,
+                    event_id=event_id,
+                    event_video_path=None,
+                    detections_csv_path=None,
+                    stage3_status="failed_offset",
+                )
             return False
         if offset_seconds < 0:
             self.logger.warning("[%s] Event before video start, skipping", job.video_id)
+            if event_id:
+                event_db.update_stage3_artifacts(
+                    station=job.station,
+                    event_id=event_id,
+                    event_video_path=None,
+                    detections_csv_path=None,
+                    stage3_status="failed_negative_offset",
+                )
             return False
         clip_start = max(0.0, offset_seconds - self.stage_cfg.clip_before)
         clip_end = offset_seconds + self.stage_cfg.clip_after
@@ -182,6 +228,14 @@ class ClipExtractionProcessor(StageProcessor):
             clip_end = min(video_duration, clip_end)
         if clip_end - clip_start <= 0:
             self.logger.warning("[%s] Invalid clip window, skipping", job.video_id)
+            if event_id:
+                event_db.update_stage3_artifacts(
+                    station=job.station,
+                    event_id=event_id,
+                    event_video_path=None,
+                    detections_csv_path=None,
+                    stage3_status="failed_window",
+                )
             return False
 
         subfolder = self._determine_subfolder(event)
@@ -190,13 +244,20 @@ class ClipExtractionProcessor(StageProcessor):
         video_out_dir.mkdir(parents=True, exist_ok=True)
         csv_out_dir.mkdir(parents=True, exist_ok=True)
 
-        event_id = event.get("event_id")
         output_filename = format_event_filename(event_id)
         final_video_path = video_out_dir / output_filename
         detections_csv = csv_out_dir / output_filename.replace(".mp4", "_detections.csv")
 
         if final_video_path.exists() and detections_csv.exists():
             self.logger.debug("[%s] Clip already exists: %s", job.video_id, final_video_path)
+            if event_id:
+                event_db.update_stage3_artifacts(
+                    station=job.station,
+                    event_id=event_id,
+                    event_video_path=str(final_video_path.resolve()),
+                    detections_csv_path=str(detections_csv.resolve()),
+                    stage3_status="completed",
+                )
             return True
 
         # Ensure overlay timestamp is populated even when events CSV has NaT.
@@ -217,6 +278,14 @@ class ClipExtractionProcessor(StageProcessor):
             self.logger.error("[%s] Failed to extract base clip for %s", job.video_id, output_filename)
             if temp_clip.exists():
                 temp_clip.unlink()
+            if event_id:
+                event_db.update_stage3_artifacts(
+                    station=job.station,
+                    event_id=event_id,
+                    event_video_path=None,
+                    detections_csv_path=None,
+                    stage3_status="failed_extract",
+                )
             return False
 
         if self.model_path.exists():
@@ -234,6 +303,14 @@ class ClipExtractionProcessor(StageProcessor):
                 if yolo_temp.exists():
                     yolo_temp.unlink()
                 self.logger.error("[%s] YOLO overlay failed for %s", job.video_id, output_filename)
+                if event_id:
+                    event_db.update_stage3_artifacts(
+                        station=job.station,
+                        event_id=event_id,
+                        event_video_path=None,
+                        detections_csv_path=None,
+                        stage3_status="failed_yolo",
+                    )
                 return False
 
             if self.stage_cfg.compression.enabled:
@@ -247,6 +324,14 @@ class ClipExtractionProcessor(StageProcessor):
                     yolo_temp.unlink()
                 if not compressed:
                     self.logger.error("[%s] Compression failed for %s", job.video_id, output_filename)
+                    if event_id:
+                        event_db.update_stage3_artifacts(
+                            station=job.station,
+                            event_id=event_id,
+                            event_video_path=None,
+                            detections_csv_path=None,
+                            stage3_status="failed_compress",
+                        )
                     return False
             else:
                 yolo_temp.rename(final_video_path)
@@ -257,6 +342,15 @@ class ClipExtractionProcessor(StageProcessor):
                 pd.DataFrame(
                     columns=["frame", "class", "confidence", "xmin", "ymin", "xmax", "ymax"]
                 ).to_csv(detections_csv, index=False)
+
+        if event_id:
+            event_db.update_stage3_artifacts(
+                station=job.station,
+                event_id=event_id,
+                event_video_path=str(final_video_path.resolve()),
+                detections_csv_path=str(detections_csv.resolve()),
+                stage3_status="completed",
+            )
 
         return True
 

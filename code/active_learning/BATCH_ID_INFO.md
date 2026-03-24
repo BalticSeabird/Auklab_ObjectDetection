@@ -14,6 +14,18 @@ Each upload session now gets a **unique timestamp-based Batch ID** that's automa
 {prefix}_{batch_id}_{problem_type}
 ```
 
+For the Stage3 clip branch, use:
+
+```text
+active_learning_stage3_{batch_id}_{problem_type}
+```
+
+Suggested `problem_type` values for this branch:
+- `fish_hard_negative`
+- `fish_low_confidence`
+- `adult_chick_instability`
+- `low_light_blur`
+
 **Example batch names:**
 - `active_learning_20251114_143022_fish`
 - `active_learning_20251114_143022_edge_detection`

@@ -5,6 +5,30 @@ Improve object detection model by identifying and annotating problematic frames 
 
 ## Quick Workflow
 
+### Stage3 Branch Workflow (Clip-Driven)
+```bash
+# Configure
+cp code/active_learning/config_stage3_branch.yaml my_stage3_branch.yaml
+
+# Index + sample + pre-annotate
+python code/active_learning/run_stage3_active_learning_branch.py \
+    --config my_stage3_branch.yaml \
+    --steps index sample annotate
+
+# Optional upload step
+python code/active_learning/run_stage3_active_learning_branch.py \
+    --config my_stage3_branch.yaml \
+    --steps upload
+
+# Prepare merge-ready retrain bundle from exported annotations
+python code/active_learning/prepare_stage3_retrain_bundle.py \
+    --export-root path/to/roboflow_export \
+    --output-root data \
+    --bundle-name stage3_retrain_bundle_run1
+```
+
+Artifacts are written under the configured `paths.output_dir` (default: `data/active_learning_stage3_branch`).
+
 ### 1. Identify Problem Frames (~5 min)
 ```bash
 python code/active_learning/identify_problem_frames.py

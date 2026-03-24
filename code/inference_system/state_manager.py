@@ -20,6 +20,8 @@ class ProcessingStage(IntEnum):
 
     STAGE1 = 1  # Video inference
     STAGE2 = 2  # Event detection
+    STAGE3 = 3  # Clip extraction and clip-level detections
+    STAGE4 = 4  # Post-classification and final event flags
 
 
 class StageStatus(str, Enum):
@@ -147,6 +149,20 @@ class StateManager:
                     ON videos(station, year);
                     """
                 )
+
+                # Ensure every discovered video has placeholder rows for all
+                # currently defined pipeline stages. This is critical when
+                # new stages are introduced and operators run with
+                # --skip-discovery against an existing state DB.
+                for stage in ProcessingStage:
+                    cursor.execute(
+                        """
+                        INSERT OR IGNORE INTO processing_stages (video_id, stage, status)
+                        SELECT v.video_id, ?, ?
+                        FROM videos v
+                        """,
+                        (int(stage), StageStatus.PENDING.value),
+                    )
                 conn.commit()
 
     def discover_videos(self, videos: Iterable[VideoJob]) -> int:

@@ -29,8 +29,8 @@ from postprocess.batch_analyze_days import process_single_file  # type: ignore  
 from postprocess.extract_event_clips import format_event_filename  # type: ignore  # noqa: E402
 
 from .config_manager import Config
-from .path_utils import get_clips_output_dir, get_detection_csv_path, get_event_csv_path
-from .stage3_clips import ClipExtractionProcessor
+from .event_database import EventDatabase
+from .path_utils import get_clips_output_dir, get_detection_csv_path, get_station_event_db_path
 from .state_manager import VideoJob
 from .worker_pool import (
     ProcessingMetrics,
@@ -50,12 +50,11 @@ _EMPTY_EVENT_COLUMNS = [
 
 
 class EventDetectionProcessor(StageProcessor):
-    """Detect events for a single video and extract annotated video clips."""
+    """Detect events for a single video and persist them to station SQLite."""
 
     def __init__(self, config: Config) -> None:
         self.config = config
         self.stage_cfg = config.processing.stage2_event_detection
-        self.clip_processor = ClipExtractionProcessor(config)
         self.logger = logging.getLogger("stage2")
         self.model_name = self._derive_model_name(config)
 
@@ -64,56 +63,30 @@ class EventDetectionProcessor(StageProcessor):
         if not detections_csv.exists():
             raise RecoverableError(f"Detections CSV missing for {job.video_id}: {detections_csv}")
 
-        event_csv = get_event_csv_path(self.config, job)
-
-        # ── Event detection ────────────────────────────────────────────────
-        if event_csv.exists():
-            self.logger.info("[%s] Events CSV already exists, reusing", job.video_id)
-            events_df = pd.read_csv(event_csv)
-        else:
-            events_df = self._detect_and_save(job, detections_csv, event_csv)
+        events_df = self._detect_events(job, detections_csv)
+        event_db = EventDatabase.for_station(self.config, job.station)
+        event_db.initialize()
+        persisted_rows = event_db.upsert_events(station=job.station, job=job, events_df=events_df)
 
         events_count = len(events_df)
 
-        # ── Clip extraction ────────────────────────────────────────────────
-        clips_created = 0
-        clips_failed = 0
-        if not events_df.empty:
-            if job.filepath.exists():
-                filtered = self.clip_processor._filter_events(events_df)
-                clip_result = self.clip_processor.process_events_for_job(
-                    job, filtered, event_csv_path=event_csv
-                )
-                if clip_result and clip_result.metadata:
-                    clips_created = clip_result.metadata.get("clips_created", 0)
-                    clips_failed = clip_result.metadata.get("clips_failed", 0)
-            else:
-                self.logger.warning(
-                    "[%s] Source video not found, skipping clip extraction: %s",
-                    job.video_id,
-                    job.filepath,
-                )
-
         return ProcessingResult(
             metadata={
-                "events_csv": str(event_csv),
+                "events_db": str(get_station_event_db_path(self.config, job.station)),
                 "events_count": events_count,
-                "clips_created": clips_created,
-                "clips_failed": clips_failed,
+                "persisted_rows": persisted_rows,
             },
-            metrics=ProcessingMetrics(events_count=events_count, clips_count=clips_created),
+            metrics=ProcessingMetrics(events_count=events_count),
         )
 
     # ──────────────────────────────────────────────────────────────────────
 
-    def _detect_and_save(
+    def _detect_events(
         self,
         job: VideoJob,
         detections_csv: Path,
-        event_csv: Path,
     ) -> pd.DataFrame:
-        """Run event detection and persist a per-video events CSV."""
-        event_csv.parent.mkdir(parents=True, exist_ok=True)
+        """Run event detection and build a per-video event dataframe."""
 
         result = process_single_file(
             str(detections_csv),
@@ -131,12 +104,12 @@ class EventDetectionProcessor(StageProcessor):
 
         if not result:
             self.logger.warning("[%s] No detections available for event analysis", job.video_id)
-            return self._save_empty(event_csv)
+            return pd.DataFrame(columns=_EMPTY_EVENT_COLUMNS)
 
         events = result.get("events", [])
         if not events:
             self.logger.info("[%s] No events detected", job.video_id)
-            return self._save_empty(event_csv)
+            return pd.DataFrame(columns=_EMPTY_EVENT_COLUMNS)
 
         start_time = result.get("start_time")
         rows = []
@@ -209,14 +182,8 @@ class EventDetectionProcessor(StageProcessor):
             cols = prefix_cols + [col for col in events_df.columns if col not in prefix_cols]
             events_df = events_df[cols]
 
-        events_df.to_csv(event_csv, index=False)
-        self.logger.info("[%s] %d event(s) saved to %s", job.video_id, len(events_df), event_csv)
+        self.logger.info("[%s] %d event(s) detected", job.video_id, len(events_df))
         return events_df
-
-    def _save_empty(self, event_csv: Path) -> pd.DataFrame:
-        empty_df = pd.DataFrame(columns=_EMPTY_EVENT_COLUMNS)
-        empty_df.to_csv(event_csv, index=False)
-        return empty_df
 
     @staticmethod
     def _derive_model_name(config: Config) -> str:

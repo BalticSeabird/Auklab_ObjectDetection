@@ -52,3 +52,9 @@ def get_clips_date_root(config: Config, job: VideoJob) -> Path:
 def get_model_display_name(config: Config) -> str:
     """Return a short identifier for logging and filenames."""
     return _model_identifier(config)
+
+
+def get_station_event_db_path(config: Config, station: str) -> Path:
+    """Return per-station SQLite path for event persistence."""
+    base = Path(config.paths.events_db_root)
+    return base / f"{station.upper()}_events.db"

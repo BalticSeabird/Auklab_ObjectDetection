@@ -1,0 +1,74 @@
+# Stage3-driven Active Learning Branch Configuration
+# This branch scans stage3 _events.csv files and samples from original videos.
+
+paths:
+  # Root directories that contain station/date/events/*_events.csv.
+  stage3_roots:
+    - ../../../../../../mnt/BSP_NAS2_work/auklab_model/event_data/TRI3/20250530
+
+  # Where this branch writes all artifacts.
+  output_dir: "data/active_learning_stage3_branch/01"
+
+sampling:
+  # Deterministic seed for reproducibility.
+  random_seed: 42
+
+  # Maximum number of fish-arrival events to sample.
+  max_events: 80
+
+  # Frames sampled from each selected event.
+  frames_per_event: 5
+
+  # Sampling window around event second (used when explicit offsets are not set).
+  event_window_before_sec: 1.0
+  event_window_after_sec: 1.0
+
+  # Optional explicit offsets in seconds relative to event time.
+  # event_time_offsets_seconds: [-1.0, 0.0]
+
+  # If true, selection tries to spread samples across stations and dates.
+  enforce_diversity: true
+
+filters:
+  # Optional include filter by station names.
+  include_stations: []
+
+  # Optional exclude filter by station names.
+  exclude_stations: []
+
+  # Optional YYYYMMDD lower bound.
+  date_from: null
+
+  # Optional YYYYMMDD upper bound.
+  date_to: null
+
+  # Event types to consider from _events.csv rows.
+  include_event_types:
+    - arrival
+
+  # Keep only fish arrivals (arrival_with_fish=true or fish_count>0).
+  require_fish_arrival: true
+
+  # Skip rows whose original_video_path does not exist.
+  require_existing_video: true
+
+# Scoring is internally handled for ranking events; no extra tuning required for first runs.
+
+pre_annotation:
+  enabled: true
+  model_path: "models/auklab_yolo26x_seabirdfish_6080_v1.pt"
+
+  # Per-class confidence thresholds for this branch.
+  class_thresholds:
+    adult: 0.35
+    chick: 0.35
+    fish: 0.22
+
+upload:
+  enabled: false
+  workspace: ""
+  project: ""
+  split: "train"
+  batch_name_prefix: "active_learning_stage3_01"
+  use_annotations: true
+  resume: true

@@ -21,6 +21,7 @@ paths:
   detection_model: models/auklab_yolo26x_seabirdfish_6080_v1.pt
   state_db: data/processing_state.db
   stage3_state_db: data/stage3_processing_state.db
+  events_db_root: data/events_db
   log_dir: logs
 processing:
   stage1_video_inference:
@@ -43,7 +44,8 @@ processing:
     clip_after: 10
     event_types:
     - arrival
-    fish_only: false
+    fish_only: true
+    worker_count: 4
     video_extensions:
     - .mkv
     - .mp4
@@ -52,11 +54,27 @@ processing:
       enabled: true
       crf: 28
       preset: fast
+  stage4_post_classification:
+    worker_count: 4
+    min_bird_frames: 8
+    min_centroid_displacement: 20.0
+    min_mean_motion: 2.0
+    min_fish_frames: 3
+    fish_early_presence_ratio: 0.15
+    use_model: true
+    model_path: models/stage4/tri3_fish_arrival_model.json
+    model_threshold: 0.49
+    rule_version: v2
 priorities:
   years:
-  - 2020
+  - 2025
+  - 2024
+  - 2023
+  - 2022
   - 2021
-  stations: [ROST3, TRI3, FAR3]
+  - 2020
+  - 2019
+  stations: [TRI3]
   #- TRI6
   #- TRI3
   #- FAR3
@@ -66,7 +84,7 @@ priorities:
 filters:
   date_range:
     start: '2019-05-01'
-    end: '2025-07-30'
+    end: '2025-07-10'
   # Stations listed here are completely ignored when discovering videos
   # and building the processing database. Matching is case-insensitive
   # and uses substring logic, so e.g. "TRI" will ignore TRI3, TRI6, etc.

@@ -133,7 +133,7 @@ class Stage3BatchProcessor:
             raise FileNotFoundError(f"Events CSV missing for {batch.station} {batch.date}: {events_csv}")
 
         events_df = pd.read_csv(events_csv)
-        filtered_events = self.clip_processor.filter_events(events_df)
+        filtered_events = self.clip_processor._filter_events(events_df)
         if filtered_events.empty:
             self.logger.info("[%s %s] No eligible events", batch.station, batch.date)
             return Stage3BatchMetrics()
@@ -159,7 +159,7 @@ class Stage3BatchProcessor:
                 )
                 continue
             videos_processed += 1
-            result = self.clip_processor.process_events_for_job(job, subset, event_csv_path=events_csv)
+            result = self.clip_processor.process_events_for_job(job, subset)
             metadata = result.metadata or {}
             total_created += int(metadata.get("clips_created", 0) or 0)
             total_failed += int(metadata.get("clips_failed", 0) or 0)
