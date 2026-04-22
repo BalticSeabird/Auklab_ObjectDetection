@@ -1,0 +1,56 @@
+# Active learning validation smoke config
+# Purpose: quick end-to-end test for sampling -> pre-annotation -> upload
+
+paths:
+  # Directory containing *_raw.csv files (recursive search)
+  csv_dir: "csv_detection_1fps"
+
+  # One or more video roots used to resolve video basenames from CSVs
+  video_dirs:
+    - "vid"
+
+  # Output root for this run
+  output_dir: "data/active_learning_validation_smoke"
+
+sampling:
+  enabled: true
+  n_files: 15
+  random_seed: 42
+
+detection:
+  frame_width: 2688
+  frame_height: 1520
+  confidence_threshold: 0.25
+  fish_confidence_threshold: 0.25
+  edge_margin: 100
+  max_spike_duration: 2
+  max_dip_duration: 3
+  high_count_threshold: 10
+
+extraction:
+  max_per_type: 30
+  priority: "diverse"
+  video_extensions:
+    - ".mkv"
+    - ".mp4"
+    - ".avi"
+    - ".mov"
+
+  # Enable/disable extraction by type
+  extract_types:
+    edge_detection: true
+    spike: true
+    dip: true
+    high_count: true
+    count_transition: true
+    fish: true
+
+pre_annotation:
+  enabled: true
+  model_path: "models/auklab_yolo26x_seabirdfish_6080_v1.pt"
+  confidence: 0.25
+
+processing:
+  n_workers: 4
+  verbose: true
+  save_intermediate: true

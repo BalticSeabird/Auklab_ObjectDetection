@@ -35,7 +35,7 @@ Requirements:
 import argparse
 import sys
 from pathlib import Path
-from typing import List, Optional
+from typing import Dict, List, Optional
 import json
 from datetime import datetime
 
@@ -114,6 +114,25 @@ class RoboflowBatchUploader:
         """Clear upload state after successful completion."""
         if state_file.exists():
             state_file.unlink()
+
+    def _discover_available_batches(self, frames_dir: Path) -> Dict[str, str]:
+        """Discover batch folders in frames_dir, excluding non-image folders."""
+        image_exts = {".jpg", ".jpeg", ".png", ".JPG", ".JPEG", ".PNG"}
+        batches: Dict[str, str] = {}
+
+        for child in sorted(frames_dir.iterdir()):
+            if not child.is_dir():
+                continue
+            if child.name.startswith("."):
+                continue
+            if child.name == "annotations":
+                continue
+
+            has_images = any(p.is_file() and p.suffix in image_exts for p in child.iterdir())
+            if has_images:
+                batches[child.name] = child.name.replace("_", " ").title()
+
+        return batches
     
     def upload_batches(self, frames_dir: Path, 
                       batch_types: Optional[List[str]] = None,
@@ -162,28 +181,22 @@ class RoboflowBatchUploader:
                 upload_state = {'uploaded_files': [], 'completed_batches': [], 'batch_id': batch_id}
                 self._clear_upload_state(state_file)
         
-        # Available batch types
-        available_batches = {
-            'edge_detection': 'Edge Detections',
-            'spike': 'Spike Artifacts',
-            'dip': 'Dip Artifacts',
-            'high_count': 'High Count Scenes',
-            'count_transition': 'Count Transitions',
-            'fish': 'Fish Detections'
-        }
-        
+        # Discover available batch types dynamically (legacy names still work).
+        available_batches = self._discover_available_batches(frames_dir)
+
         # Determine which batches to upload
         if batch_types is None:
-            batch_types = [b for b in available_batches.keys() 
-                          if (frames_dir / b).exists()]
+            batch_types = list(available_batches.keys())
         else:
             batch_types = [b for b in batch_types if b in available_batches]
-        
+
         # Filter out completed batches
         batch_types = [b for b in batch_types if b not in upload_state['completed_batches']]
-        
+
         if not batch_types:
             print("✗ No batches found to upload (or all already completed)")
+            if available_batches:
+                print(f"  Available batches: {', '.join(available_batches.keys())}")
             return
         
         # Check for annotations directory
@@ -206,7 +219,14 @@ class RoboflowBatchUploader:
         for batch_type in batch_types:
             batch_dir = frames_dir / batch_type
             if batch_dir.exists():
-                n_images = len(list(batch_dir.glob("*.jpg"))) + len(list(batch_dir.glob("*.png")))
+                n_images = (
+                    len(list(batch_dir.glob("*.jpg")))
+                    + len(list(batch_dir.glob("*.jpeg")))
+                    + len(list(batch_dir.glob("*.png")))
+                    + len(list(batch_dir.glob("*.JPG")))
+                    + len(list(batch_dir.glob("*.JPEG")))
+                    + len(list(batch_dir.glob("*.PNG")))
+                )
                 total_images += n_images
                 batch_full_name = f"{batch_name_prefix}_{batch_id}_{batch_type}"
                 print(f"  - {available_batches[batch_type]:25s}: {n_images:4d} images → {batch_full_name}")
@@ -289,7 +309,14 @@ class RoboflowBatchUploader:
         skipped = 0
         
         # Find all images
-        image_files = list(batch_dir.glob("*.jpg")) + list(batch_dir.glob("*.png"))
+        image_files = (
+            list(batch_dir.glob("*.jpg"))
+            + list(batch_dir.glob("*.jpeg"))
+            + list(batch_dir.glob("*.png"))
+            + list(batch_dir.glob("*.JPG"))
+            + list(batch_dir.glob("*.JPEG"))
+            + list(batch_dir.glob("*.PNG"))
+        )
         
         if not image_files:
             print(f"  ⚠ No images found in {batch_dir}")
@@ -401,9 +428,7 @@ Examples:
                        help='Roboflow project name')
     
     parser.add_argument('--batches', nargs='+',
-                       choices=['edge_detection', 'spike', 'dip', 'high_count', 
-                               'count_transition', 'fish'],
-                       help='Specific batch types to upload (default: all)')
+                       help='Specific batch folder names to upload (default: all discovered)')
     
     parser.add_argument('--use-annotations', action='store_true',
                        help='Upload with pre-annotations from annotations/yolo/')

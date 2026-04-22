@@ -74,7 +74,7 @@ priorities:
   - 2021
   - 2020
   - 2019
-  stations: [TRI3]
+  stations: [FAR3]
   #- TRI6
   #- TRI3
   #- FAR3
@@ -83,7 +83,7 @@ priorities:
   #- FAR6
 filters:
   date_range:
-    start: '2019-05-01'
+    start: '2025-05-01'
     end: '2025-07-10'
   # Stations listed here are completely ignored when discovering videos
   # and building the processing database. Matching is case-insensitive

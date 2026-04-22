@@ -1,0 +1,25 @@
+
+# Generate new annotations
+python3 code/active_learning/sample_and_annotate_images.py \
+    --image-roots ../../../../../mnt/BSP_NAS2_work/ring_reader/test_results/step1_ring_crops \
+    --output-dir ../../../../../mnt/BSP_NAS2_work/ring_reader/_tag_annotations4 \
+    --samples 80 \
+    --model ./runs/detect/train23/weights/best.pt \
+    --preferred-stations FAR6_SCALE
+
+
+# Download from Roboflow
+export ROBOFLOW_API_KEY="2Z8LedwxqBlKAbVYyz8T"
+python3 code/dataset/roboflow_download.py \
+    --workspace ai-course-2024 \
+    --project tag_detection-g6gi0 \
+    --version 3 \
+    --format yolov11
+
+
+# Reshuffle to create train validation_batch
+python3 code/dataset/create_dataset_for_training.py
+
+
+# train
+python3 code/model/train.py

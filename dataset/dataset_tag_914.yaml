@@ -1,0 +1,6 @@
+train: tag_detection_914/images/train
+val: tag_detection_914/images/val
+test: tag_detection_914/images/test
+nc: 1
+names:
+- text

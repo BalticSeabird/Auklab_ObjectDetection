@@ -40,9 +40,7 @@ def annotate_frames(frames_dir: Path, output_dir: Path, model_path: Path, class_
         images.extend(frames_dir.rglob(ext))
 
     yolo_dir = output_dir / "yolo"
-    json_dir = output_dir / "json"
     yolo_dir.mkdir(parents=True, exist_ok=True)
-    json_dir.mkdir(parents=True, exist_ok=True)
 
     stats = {
         "total_images": len(images),
@@ -103,21 +101,6 @@ def annotate_frames(frames_dir: Path, output_dir: Path, model_path: Path, class_
                 f.write(
                     f"{d['class_id']} {b['center_x']:.6f} {b['center_y']:.6f} {b['width']:.6f} {b['height']:.6f}\n"
                 )
-
-        json_path = json_dir / f"{img_path.stem}.json"
-        with open(json_path, "w", encoding="utf-8") as f:
-            json.dump(
-                {
-                    "image": img_path.name,
-                    "image_width": img_w,
-                    "image_height": img_h,
-                    "detections": detections,
-                    "model": str(model_path.name),
-                    "class_thresholds": class_thresholds,
-                },
-                f,
-                indent=2,
-            )
 
     return stats
 

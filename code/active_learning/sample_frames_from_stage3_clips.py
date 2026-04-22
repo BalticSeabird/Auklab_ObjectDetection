@@ -9,6 +9,7 @@ import argparse
 import csv
 import json
 import random
+import time
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -23,6 +24,12 @@ import yaml
 class SelectedEvent:
     event: Dict
     rank: float
+
+
+def _progress_interval(total: int, target_updates: int = 20) -> int:
+    if total <= 0:
+        return 1
+    return max(1, total // target_updates)
 
 
 def load_config(path: Path) -> Dict:
@@ -99,16 +106,64 @@ def score_low_quality(event: Dict) -> float:
 
 
 def select_events(index_rows: List[Dict], cfg: Dict) -> List[SelectedEvent]:
-    seed = int(cfg.get("sampling", {}).get("random_seed", 42))
+    sampling_cfg = cfg.get("sampling", {})
+    seed = int(sampling_cfg.get("random_seed", 42))
     random.seed(seed)
 
-    ranked = [SelectedEvent(event=row, rank=_event_rank(row) + score_low_quality(row)) for row in index_rows if row.get("original_video_path")]
+    candidates = [row for row in index_rows if row.get("original_video_path")]
+    print(f"Scoring candidate events: {len(candidates)}")
+
+    base_ranked = [SelectedEvent(event=row, rank=_event_rank(row)) for row in candidates]
+    if not base_ranked:
+        return []
+
+    base_ranked.sort(key=lambda x: x.rank, reverse=True)
+
+    max_events = _select_max_events(cfg)
+    quality_probe_enabled = bool(sampling_cfg.get("enable_quality_probe", False))
+    prefilter_multiplier = int(sampling_cfg.get("quality_probe_prefilter_multiplier", 5))
+    prefilter_min = int(sampling_cfg.get("quality_probe_prefilter_min", 200))
+
+    if not quality_probe_enabled:
+        print("Quality probe disabled: ranking by event metadata only (fish_count, event_second)", flush=True)
+        ranked = base_ranked
+    else:
+        probe_count = min(len(base_ranked), max(max_events * prefilter_multiplier, prefilter_min))
+        print(
+            f"Quality probe enabled: probing top {probe_count}/{len(base_ranked)} candidates "
+            f"(OpenCV frame reads, no model inference)",
+            flush=True,
+        )
+
+        ranked = []
+        started = time.perf_counter()
+        progress_every = _progress_interval(probe_count)
+
+        for i, item in enumerate(base_ranked[:probe_count], 1):
+            ranked.append(SelectedEvent(event=item.event, rank=item.rank + score_low_quality(item.event)))
+            if i % progress_every == 0 or i == probe_count:
+                elapsed = max(0.001, time.perf_counter() - started)
+                rate = i / elapsed
+                pct = (100.0 * i / probe_count) if probe_count else 100.0
+                print(
+                    f"  Probed {i}/{probe_count} candidates ({pct:.1f}%) | "
+                    f"elapsed {elapsed:.1f}s | {rate:.2f} probes/s",
+                    flush=True,
+                )
+
+        ranked.extend(base_ranked[probe_count:])
+
+    if quality_probe_enabled:
+        ranked.sort(key=lambda x: x.rank, reverse=True)
+
     if not ranked:
         return []
 
-    ranked.sort(key=lambda x: x.rank, reverse=True)
-    max_events = _select_max_events(cfg)
-    enforce_diversity = bool(cfg.get("sampling", {}).get("enforce_diversity", True))
+    if not quality_probe_enabled:
+        # Keep the previous progress style short and explicit for parity with probe mode.
+        print(f"Ranked {len(ranked)} candidates without quality probe", flush=True)
+
+    enforce_diversity = bool(sampling_cfg.get("enforce_diversity", True))
 
     if not enforce_diversity:
         return ranked[:max_events]
@@ -149,15 +204,39 @@ def extract_frames(selected: List[SelectedEvent], output_frames_dir: Path, cfg: 
     output_frames_dir.mkdir(parents=True, exist_ok=True)
     extracted: List[Dict] = []
     offsets = _offsets_seconds(cfg)
+    print(f"Extracting frames from {len(selected)} events with {len(offsets)} offset(s) each")
 
-    for item in selected:
+    started = time.perf_counter()
+    progress_every = _progress_interval(len(selected))
+    skipped_missing_video = 0
+    skipped_open_failed = 0
+
+    for event_idx, item in enumerate(selected, 1):
         event = item.event
         video_path = Path(event["original_video_path"])
         if not video_path.exists():
+            skipped_missing_video += 1
+            if event_idx % progress_every == 0 or event_idx == len(selected):
+                elapsed = max(0.001, time.perf_counter() - started)
+                print(
+                    f"  Processed {event_idx}/{len(selected)} events | "
+                    f"extracted={len(extracted)} | missing_video={skipped_missing_video} | "
+                    f"open_failed={skipped_open_failed} | elapsed={elapsed:.1f}s",
+                    flush=True,
+                )
             continue
 
         cap = cv2.VideoCapture(str(video_path))
         if not cap.isOpened():
+            skipped_open_failed += 1
+            if event_idx % progress_every == 0 or event_idx == len(selected):
+                elapsed = max(0.001, time.perf_counter() - started)
+                print(
+                    f"  Processed {event_idx}/{len(selected)} events | "
+                    f"extracted={len(extracted)} | missing_video={skipped_missing_video} | "
+                    f"open_failed={skipped_open_failed} | elapsed={elapsed:.1f}s",
+                    flush=True,
+                )
             continue
 
         frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
@@ -202,6 +281,23 @@ def extract_frames(selected: List[SelectedEvent], output_frames_dir: Path, cfg: 
             )
 
         cap.release()
+
+        if event_idx % progress_every == 0 or event_idx == len(selected):
+            elapsed = max(0.001, time.perf_counter() - started)
+            print(
+                f"  Processed {event_idx}/{len(selected)} events | "
+                f"extracted={len(extracted)} | missing_video={skipped_missing_video} | "
+                f"open_failed={skipped_open_failed} | elapsed={elapsed:.1f}s",
+                flush=True,
+            )
+
+    total_elapsed = max(0.001, time.perf_counter() - started)
+    print(
+        f"Extraction phase done in {total_elapsed:.1f}s | "
+        f"frames={len(extracted)} | missing_video={skipped_missing_video} | "
+        f"open_failed={skipped_open_failed}",
+        flush=True,
+    )
 
     return extracted
 

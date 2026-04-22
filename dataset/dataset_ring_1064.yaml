@@ -1,0 +1,6 @@
+train: ring_detection_1064/images/train
+val: ring_detection_1064/images/val
+test: ring_detection_1064/images/test
+nc: 1
+names:
+- metal_ring

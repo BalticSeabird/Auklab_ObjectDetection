@@ -1,55 +1,42 @@
+import pandas as pd
 from pathlib import Path 
 from ultralytics import YOLO
+import os 
+import sys
 import cv2
 
 # Load a pretrained YOLO model
-modelpath = Path("models/RingRead20230722_yolov8n_640.pt")
+#modelpath = Path("models/eider_model_nano_v5852.pt")
+modelpath = Path("runs/detect/train24/weights/tag_detection_nano1347.pt")
+
 model = YOLO(modelpath)
+modelname = modelpath.stem
 
-# Get all images in the folder
-image_folder = Path("images")
-image_extensions = ['*.jpg', '*.jpeg', '*.png', '*.JPG', '*.JPEG', '*.PNG']
-images = []
-for ext in image_extensions:
-    images.extend(image_folder.glob(ext))
+ims = list(Path("../../../../../../mnt/BSP_NAS2_work/ring_reader/test_results/step1_ring_crops/").rglob("*.png"))
+print(f"Found {len(ims)} images")
 
-if not images:
-    print(f"No images found in {image_folder}/")
-    exit()
+# Create output directory for annotated images
+output_dir = Path("./output_predictions")
+output_dir.mkdir(exist_ok=True)
 
-print(f"Found {len(images)} images")
-print("Press any key to move to next image, 'q' to quit\n")
+# Run inference using the pretrained model
+for idx, im in enumerate(ims):
+    print(f"Processing image {idx + 1}/{len(ims)}: {im.name}")
 
-# Loop through images
-for im in images:
-    print(f"Processing: {im.name}")
-    
-    # Read image
-    frame = cv2.imread(str(im))
-    if frame is None:
-        print(f"Failed to read image: {im}")
-        continue
-    
-    # Run inference
-    results = model.predict(frame, verbose=False)
-    
-    # Draw bounding boxes on the frame
+    # Run YOLOv8 inference on the image
+    results = model.predict(im, conf=0.5)
+
+    # Get the annotated image with predictions drawn
     annotated_frame = results[0].plot()
-    
-    # Display the image with detections
-    cv2.imshow('Object Detection - Press any key for next, q to quit', annotated_frame)
-    
-    # Wait for key press
-    key = cv2.waitKey(0)
-    
-    # Quit if 'q' is pressed
-    if key == ord('q'):
-        print("Quitting...")
-        break
 
-# Clean up
-cv2.destroyAllWindows()
+    # Save the annotated image
+    output_path = output_dir / f"pred_{im.name}"
+    cv2.imwrite(str(output_path), annotated_frame)
+    print(f"  Saved to: {output_path}")
 
+print(f"\nAll predictions saved to {output_dir.resolve()}")
+
+    
 
 
 

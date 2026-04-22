@@ -1,0 +1,86 @@
+# Stage3-driven Active Learning Branch Configuration
+# This branch scans stage3 _events.csv files and samples from original videos.
+
+paths:
+  # Optional: root directories that contain station/date/events/*_events.csv.
+  # Keep empty when reading directly from SQLite event DB files.
+  stage3_roots: []
+
+  # SQLite source(s): either a single events_db path or events_db_paths list.
+  events_db: "data/events_db/BONDEN6_events.db"
+  # events_db_paths:
+  #   - "data/events_db"
+
+  # Where this branch writes all artifacts.
+  output_dir: "data/active_learning_stage3_branch/bonden6_fishfocus02"
+
+sampling:
+  # Deterministic seed for reproducibility.
+  random_seed: 46
+
+  # Expensive quality probe (brightness/blur OpenCV reads). Keep disabled for fast runs.
+  enable_quality_probe: false
+
+  # If quality probe is enabled, probe only this bounded top subset.
+  quality_probe_prefilter_multiplier: 5
+  quality_probe_prefilter_min: 200
+
+  # Maximum number of fish-arrival events to sample.
+  max_events: 100
+
+  # Frames sampled from each selected event.
+  frames_per_event: 5
+
+  # Sampling window around event second (used when explicit offsets are not set).
+  event_window_before_sec: 1.0
+  event_window_after_sec: 1.0
+
+  # Optional explicit offsets in seconds relative to event time.
+  # event_time_offsets_seconds: [-1.0, 0.0]
+
+  # If true, selection tries to spread samples across stations and dates.
+  enforce_diversity: true
+
+filters:
+  # Optional include filter by station names.
+  include_stations: []
+
+  # Optional exclude filter by station names.
+  exclude_stations: []
+
+  # Optional YYYYMMDD lower bound.
+  date_from: null
+
+  # Optional YYYYMMDD upper bound.
+  date_to: null
+
+  # Event types to consider from _events.csv rows.
+  include_event_types:
+    - arrival
+
+  # Keep only fish arrivals (arrival_with_fish=true or fish_count>0).
+  require_fish_arrival: true
+
+  # Skip rows whose original_video_path does not exist.
+  require_existing_video: true
+
+# Scoring is internally handled for ranking events; no extra tuning required for first runs.
+
+pre_annotation:
+  enabled: true
+  model_path: "models/auklab_yolo26x_seabirdfish_6080_v1.pt"
+
+  # Per-class confidence thresholds for this branch.
+  class_thresholds:
+    adult: 0.35
+    chick: 0.35
+    fish: 0.22
+
+upload:
+  enabled: false
+  workspace: ""
+  project: ""
+  split: "train"
+  batch_name_prefix: "active_learning_stage3_04"
+  use_annotations: true
+  resume: true
