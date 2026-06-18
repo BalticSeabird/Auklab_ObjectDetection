@@ -31,6 +31,17 @@ MODEL_FEATURE_ORDER = [
     "fish_bird_min_distance",
     "fish_to_bird_first_frame_ratio_gap",
     "arrival_with_fish_stage2",
+    # Improved temporal features for bird arrival detection
+    "bird_appears_mid_clip",
+    "bird_count_peak",
+    "bird_arrival_timing_ratio",
+    # Improved temporal features for fish arrival behavior
+    "fish_count_increases",
+    "fish_count_peak",
+    "fish_arrival_timing_ratio",
+    "fish_deceleration",
+    "fish_movement_distance",
+    "fish_bird_convergence_rate",
 ]
 
 
@@ -50,6 +61,225 @@ def _safe_int(value: object, default: int = 0) -> int:
         return int(value)
     except (TypeError, ValueError):
         return default
+
+
+def count_detections_in_phase(df: pd.DataFrame, total_frames: int, phase_start_ratio: float, phase_end_ratio: float) -> int:
+    """Count unique detections in a time phase.
+
+    Args:
+        df: DataFrame with detections
+        total_frames: Total number of frames
+        phase_start_ratio: Start of phase as ratio (0-1)
+        phase_end_ratio: End of phase as ratio (0-1)
+
+    Returns:
+        Number of detections in that phase
+    """
+    if df.empty or total_frames <= 0:
+        return 0
+
+    frame_start = int(total_frames * phase_start_ratio)
+    frame_end = int(total_frames * phase_end_ratio)
+
+    phase_detections = df[(df["frame"] >= frame_start) & (df["frame"] < frame_end)]
+    return len(phase_detections)
+
+
+def get_first_appearance_ratio(df: pd.DataFrame, total_frames: int) -> float:
+    """Get when an object first appears as a ratio (0-1).
+
+    Returns:
+        Ratio of frame where object first appears (0=start, 1=end)
+    """
+    if df.empty or total_frames <= 0:
+        return 1.0  # Default to end if no detections
+
+    first_frame = int(df["frame"].min())
+    return float(first_frame) / float(total_frames)
+
+
+def object_appears_mid_clip(df: pd.DataFrame, total_frames: int, mid_start_ratio: float = 0.3, mid_end_ratio: float = 0.7) -> int:
+    """Check if object first appears in the middle of the clip (not at start/end).
+
+    Args:
+        df: DataFrame with detections
+        total_frames: Total number of frames
+        mid_start_ratio: Start of "middle" phase (default 30%)
+        mid_end_ratio: End of "middle" phase (default 70%)
+
+    Returns:
+        1 if first appearance is in middle range, 0 otherwise
+    """
+    if df.empty or total_frames <= 0:
+        return 0
+
+    first_frame = int(df["frame"].min())
+    appearance_ratio = float(first_frame) / float(total_frames) if total_frames > 0 else 1.0
+
+    # Check if appearance is in middle range (true arrival behavior)
+    return 1 if (appearance_ratio >= mid_start_ratio and appearance_ratio <= mid_end_ratio) else 0
+
+
+def get_count_timeline(df: pd.DataFrame, total_frames: int, num_phases: int = 3) -> List[int]:
+    """Get detection count in each phase to track when counts peak.
+
+    Divides clip into equal phases and returns count for each.
+    """
+    if df.empty or total_frames <= 0:
+        return [0] * num_phases
+
+    counts = []
+    phase_width = 1.0 / num_phases
+    for i in range(num_phases):
+        start_ratio = i * phase_width
+        end_ratio = (i + 1) * phase_width
+        count = count_detections_in_phase(df, total_frames, start_ratio, end_ratio)
+        counts.append(count)
+
+    return counts
+
+
+def count_increases_in_timeline(timeline: List[int]) -> int:
+    """Check if count increases at any point in timeline.
+
+    Returns 1 if any adjacent phases show an increase (e.g., 1→2 or 0→1)
+    """
+    for i in range(len(timeline) - 1):
+        if timeline[i + 1] > timeline[i]:
+            return 1
+    return 0
+
+
+def get_peak_timing_ratio(df: pd.DataFrame, total_frames: int, num_phases: int = 3) -> float:
+    """Get when peak count occurs as a ratio (0=start, 1=end).
+
+    Returns:
+        Ratio indicating where in the clip the peak occurred
+    """
+    timeline = get_count_timeline(df, total_frames, num_phases)
+
+    if not timeline or max(timeline) == 0:
+        return 0.5  # Default to middle if no detections
+
+    peak_phase = timeline.index(max(timeline))
+    phase_width = 1.0 / num_phases
+
+    # Return midpoint of peak phase
+    peak_ratio = (peak_phase + 0.5) * phase_width
+    return peak_ratio
+
+
+def calculate_motion_in_phase(
+    centroids: Dict[int, Tuple[float, float]],
+    total_frames: int,
+    phase_start_ratio: float,
+    phase_end_ratio: float
+) -> float:
+    """Calculate average motion speed in a time phase.
+
+    Returns:
+        Average frame-to-frame distance in that phase
+    """
+    if not centroids or total_frames <= 0:
+        return 0.0
+
+    frame_start = int(total_frames * phase_start_ratio)
+    frame_end = int(total_frames * phase_end_ratio)
+
+    phase_frames = sorted([f for f in centroids.keys() if frame_start <= f < frame_end])
+    if len(phase_frames) < 2:
+        return 0.0
+
+    deltas: List[float] = []
+    for i in range(len(phase_frames) - 1):
+        f1, f2 = phase_frames[i], phase_frames[i + 1]
+        c1, c2 = centroids[f1], centroids[f2]
+        dx = c2[0] - c1[0]
+        dy = c2[1] - c1[1]
+        deltas.append((dx * dx + dy * dy) ** 0.5)
+
+    return float(sum(deltas) / len(deltas)) if deltas else 0.0
+
+
+def calculate_object_distance(
+    centroids: Dict[int, Tuple[float, float]],
+    total_frames: int,
+    phase_start_ratio: float,
+    phase_end_ratio: float
+) -> float:
+    """Calculate distance traveled by object in a phase (first to last position).
+
+    Returns:
+        Euclidean distance from first to last position
+    """
+    if not centroids or total_frames <= 0:
+        return 0.0
+
+    frame_start = int(total_frames * phase_start_ratio)
+    frame_end = int(total_frames * phase_end_ratio)
+
+    phase_frames = sorted([f for f in centroids.keys() if frame_start <= f < frame_end])
+    if len(phase_frames) < 2:
+        return 0.0
+
+    first_pos = centroids[phase_frames[0]]
+    last_pos = centroids[phase_frames[-1]]
+
+    dx = last_pos[0] - first_pos[0]
+    dy = last_pos[1] - first_pos[1]
+    return (dx * dx + dy * dy) ** 0.5
+
+
+def calculate_distance_trend(
+    bird_centroids: Dict[int, Tuple[float, float]],
+    fish_centroids: Dict[int, Tuple[float, float]],
+    total_frames: int
+) -> float:
+    """Calculate if fish and bird are converging (distance decreasing).
+
+    Returns:
+        early_avg_distance - late_avg_distance (positive = converging)
+    """
+    if not bird_centroids or not fish_centroids or total_frames <= 0:
+        return 0.0
+
+    # Early phase (0-50%)
+    early_distance = calculate_mean_distance_between(bird_centroids, fish_centroids, total_frames, 0.0, 0.5)
+    # Late phase (50-100%)
+    late_distance = calculate_mean_distance_between(bird_centroids, fish_centroids, total_frames, 0.5, 1.0)
+
+    # Positive value = they were far but got closer (converging)
+    if early_distance == 9999.0 or late_distance == 9999.0:
+        return 0.0
+
+    return early_distance - late_distance
+
+
+def calculate_mean_distance_between(
+    bird_centroids: Dict[int, Tuple[float, float]],
+    fish_centroids: Dict[int, Tuple[float, float]],
+    total_frames: int,
+    phase_start_ratio: float,
+    phase_end_ratio: float
+) -> float:
+    """Calculate average distance between bird and fish in a phase."""
+    frame_start = int(total_frames * phase_start_ratio)
+    frame_end = int(total_frames * phase_end_ratio)
+
+    overlap = sorted([f for f in set(bird_centroids.keys()) & set(fish_centroids.keys())
+                     if frame_start <= f < frame_end])
+    if not overlap:
+        return 9999.0
+
+    distances: List[float] = []
+    for frame in overlap:
+        bird_c = bird_centroids[frame]
+        fish_c = fish_centroids[frame]
+        dx = bird_c[0] - fish_c[0]
+        dy = bird_c[1] - fish_c[1]
+        distances.append((dx * dx + dy * dy) ** 0.5)
+
+    return float(sum(distances) / len(distances)) if distances else 9999.0
 
 
 @dataclass
@@ -123,6 +353,15 @@ def extract_stage4_features(detections: pd.DataFrame, *, stage2_flag: int = 0) -
             "fish_bird_min_distance": 9999.0,
             "fish_to_bird_first_frame_ratio_gap": 1.0,
             "arrival_with_fish_stage2": int(stage2_flag),
+            "bird_appears_mid_clip": 0,
+            "bird_count_peak": 0,
+            "bird_arrival_timing_ratio": 0.5,
+            "fish_count_increases": 0,
+            "fish_count_peak": 0,
+            "fish_arrival_timing_ratio": 0.5,
+            "fish_deceleration": 0.0,
+            "fish_movement_distance": 0.0,
+            "fish_bird_convergence_rate": 0.0,
         }
 
     frame_max = int(detections["frame"].max()) if "frame" in detections.columns else -1
@@ -184,6 +423,29 @@ def extract_stage4_features(detections: pd.DataFrame, *, stage2_flag: int = 0) -
     if total_frames > 0 and bird_frames:
         bird_first_ratio = float(bird_frames[0]) / float(total_frames)
 
+    # Calculate improved temporal features for bird arrival (when does bird appear?)
+    bird_appears_mid_clip = object_appears_mid_clip(bird, total_frames, mid_start_ratio=0.3, mid_end_ratio=0.7)
+    bird_timeline = get_count_timeline(bird, total_frames, num_phases=3)
+    bird_count_peak = max(bird_timeline) if bird_timeline else 0
+    bird_arrival_timing_ratio = get_peak_timing_ratio(bird, total_frames, num_phases=3)
+
+    # Calculate improved temporal features for fish arrival (when does fish appear/increase?)
+    fish_timeline = get_count_timeline(fish, total_frames, num_phases=3)
+    fish_count_increases = count_increases_in_timeline(fish_timeline)
+    fish_count_peak = max(fish_timeline) if fish_timeline else 0
+    fish_arrival_timing_ratio = get_peak_timing_ratio(fish, total_frames, num_phases=3)
+
+    # Fish deceleration: early motion - late motion (positive = slowed down)
+    fish_early_motion = calculate_motion_in_phase(fish_by_frame, total_frames, 0.0, 0.5)
+    fish_late_motion = calculate_motion_in_phase(fish_by_frame, total_frames, 0.5, 1.0)
+    fish_deceleration = fish_early_motion - fish_late_motion
+
+    # Fish movement distance: how far the fish traveled overall
+    fish_movement_distance = calculate_object_distance(fish_by_frame, total_frames, 0.0, 1.0)
+
+    # Fish-bird convergence: are they getting closer?
+    fish_bird_convergence_rate = calculate_distance_trend(bird_by_frame, fish_by_frame, total_frames)
+
     return {
         "total_frames": total_frames,
         "bird_frames": len(bird_frames),
@@ -204,6 +466,15 @@ def extract_stage4_features(detections: pd.DataFrame, *, stage2_flag: int = 0) -
         "fish_bird_min_distance": fish_bird_min_distance,
         "fish_to_bird_first_frame_ratio_gap": fish_first_ratio - bird_first_ratio,
         "arrival_with_fish_stage2": int(stage2_flag),
+        "bird_appears_mid_clip": bird_appears_mid_clip,
+        "bird_count_peak": bird_count_peak,
+        "bird_arrival_timing_ratio": bird_arrival_timing_ratio,
+        "fish_count_increases": fish_count_increases,
+        "fish_count_peak": fish_count_peak,
+        "fish_arrival_timing_ratio": fish_arrival_timing_ratio,
+        "fish_deceleration": fish_deceleration,
+        "fish_movement_distance": fish_movement_distance,
+        "fish_bird_convergence_rate": fish_bird_convergence_rate,
     }
 
 

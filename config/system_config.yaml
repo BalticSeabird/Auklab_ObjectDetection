@@ -9,16 +9,16 @@ hardware:
     - 1
     workers_per_gpu: 2
   cpus:
-    worker_count: 90
+    worker_count: 60
 paths:
   video_roots:
-  - ../../../../../../mnt/BSP_NAS2/Video
-  - ../../../../../../mnt/BSP_NAS2_vol3/Video
-  - ../../../../../../mnt/BSP_NAS2_vol4/Video
-  inference_output: ../../../../../../mnt/BSP_NAS2_work/auklab_model/inference/
-  event_analysis_output: ../../../../../../mnt/BSP_NAS2_work/auklab_model/event_data/
-  clips_output: ../../../../../../mnt/BSP_NAS2_work/auklab_model/event_data/
-  detection_model: models/auklab_yolo26x_seabirdfish_6080_v1.pt
+  - /mnt/BSP_NAS2/Video
+  - /mnt/BSP_NAS2_vol3/Video
+  - /mnt/BSP_NAS2_vol4/Video
+  inference_output: /mnt/BSP_NAS2_work/auklab_model/inference/
+  event_analysis_output: /mnt/BSP_NAS2_work/auklab_model/event_data/
+  clips_output: /mnt/BSP_NAS2_work/auklab_model/event_data/
+  detection_model: models/auklab_yolo26xl_seabird_fish_7190.pt
   state_db: data/processing_state.db
   stage3_state_db: data/stage3_processing_state.db
   events_db_root: data/events_db
@@ -62,8 +62,10 @@ processing:
     min_fish_frames: 3
     fish_early_presence_ratio: 0.15
     use_model: true
-    model_path: models/stage4/tri3_fish_arrival_model.json
-    model_threshold: 0.49
+    model1_path: "models/stage4/model1_bird_arrival.json"
+    model2_path: "models/stage4/model2_fish_arrival.json"
+    model1_threshold: 0.5
+    model2_threshold: 0.5
     rule_version: v2
 priorities:
   years:
@@ -74,7 +76,7 @@ priorities:
   - 2021
   - 2020
   - 2019
-  stations: [FAR3]
+  stations: [FAR3, TRI3, TRI6, FAR6, BONDEN6]
   #- TRI6
   #- TRI3
   #- FAR3
@@ -84,7 +86,7 @@ priorities:
 filters:
   date_range:
     start: '2025-05-01'
-    end: '2025-07-10'
+    end: '2025-07-15'
   # Stations listed here are completely ignored when discovering videos
   # and building the processing database. Matching is case-insensitive
   # and uses substring logic, so e.g. "TRI" will ignore TRI3, TRI6, etc.

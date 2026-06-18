@@ -1,0 +1,57 @@
+{
+  "model_type": "logistic_regression",
+  "target_label": "is_new_fish_arrival",
+  "feature_names": [
+    "fish_count_increases",
+    "fish_count_peak",
+    "fish_arrival_timing_ratio",
+    "fish_deceleration",
+    "fish_movement_distance",
+    "fish_bird_convergence_rate",
+    "total_frames",
+    "fish_frames",
+    "arrival_with_fish_stage2"
+  ],
+  "means": [
+    0.6190476190476191,
+    45.166666666666664,
+    0.4007936507936507,
+    27.57742931029273,
+    517.3533472051129,
+    7.894432029624737,
+    370.8333333333333,
+    72.30952380952381,
+    1.0
+  ],
+  "stds": [
+    0.485620906056456,
+    39.29947089590918,
+    0.23446303566226098,
+    74.0279442214543,
+    389.9978344707087,
+    115.84105831435589,
+    22.71135301023598,
+    70.49315674157522,
+    1.0
+  ],
+  "weights": [
+    -0.22493296727472042,
+    0.4942156571589646,
+    0.46068606863393335,
+    -0.3520274323697889,
+    1.194978525404103,
+    0.09778556738544737,
+    -0.07896886936560561,
+    -0.8772810805746821,
+    0.0
+  ],
+  "bias": 0.9330806342159902,
+  "threshold": 0.5,
+  "metadata": {
+    "station": "TRI3",
+    "feature_count": 9,
+    "training_samples": 121,
+    "positive_samples": 80,
+    "negative_samples": 41
+  }
+}

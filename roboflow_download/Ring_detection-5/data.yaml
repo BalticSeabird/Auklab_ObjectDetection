@@ -1,0 +1,13 @@
+train: ../train/images
+val: ../valid/images
+test: ../test/images
+
+nc: 1
+names: ['0']
+
+roboflow:
+  workspace: ai-course-2024
+  project: ring_detection-497ko
+  version: 5
+  license: CC BY 4.0
+  url: https://universe.roboflow.com/ai-course-2024/ring_detection-497ko/dataset/5

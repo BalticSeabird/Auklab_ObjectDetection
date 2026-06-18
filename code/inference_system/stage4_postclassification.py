@@ -24,22 +24,37 @@ class Stage4PostClassificationProcessor(StageProcessor):
         self.config = config
         self.stage_cfg = config.processing.stage4_post_classification
         self.logger = logging.getLogger("stage4")
-        self.model_artifact: Optional[Stage4ModelArtifact] = None
-        self._load_model_if_configured()
+        self.model1_artifact: Optional[Stage4ModelArtifact] = None
+        self.model2_artifact: Optional[Stage4ModelArtifact] = None
+        self._load_models_if_configured()
 
-    def _load_model_if_configured(self) -> None:
+    def _load_models_if_configured(self) -> None:
         if not self.stage_cfg.use_model:
             return
-        model_path = Path(self.stage_cfg.model_path)
-        if not model_path.exists():
-            self.logger.warning("Stage4 model enabled but missing file: %s", model_path)
-            return
-        try:
-            self.model_artifact = Stage4ModelArtifact.from_path(model_path)
-            self.logger.info("Loaded Stage4 model artifact from %s", model_path)
-        except Exception as exc:
-            self.logger.exception("Failed to load Stage4 model artifact from %s: %s", model_path, exc)
-            self.model_artifact = None
+
+        # Load Model 1: Bird Arrival Detector
+        model1_path = Path(self.stage_cfg.model1_path)
+        if not model1_path.exists():
+            self.logger.warning("Stage4 Model 1 enabled but missing file: %s", model1_path)
+        else:
+            try:
+                self.model1_artifact = Stage4ModelArtifact.from_path(model1_path)
+                self.logger.info("Loaded Stage4 Model 1 (bird arrival) from %s", model1_path)
+            except Exception as exc:
+                self.logger.exception("Failed to load Stage4 Model 1 from %s: %s", model1_path, exc)
+                self.model1_artifact = None
+
+        # Load Model 2: Fish Arrival Detector
+        model2_path = Path(self.stage_cfg.model2_path)
+        if not model2_path.exists():
+            self.logger.warning("Stage4 Model 2 enabled but missing file: %s", model2_path)
+        else:
+            try:
+                self.model2_artifact = Stage4ModelArtifact.from_path(model2_path)
+                self.logger.info("Loaded Stage4 Model 2 (fish arrival) from %s", model2_path)
+            except Exception as exc:
+                self.logger.exception("Failed to load Stage4 Model 2 from %s: %s", model2_path, exc)
+                self.model2_artifact = None
 
     def process(self, job: VideoJob, context: WorkerContext) -> Optional[ProcessingResult]:  # noqa: ARG002
         event_db = EventDatabase.for_station(self.config, job.station)
@@ -126,22 +141,49 @@ class Stage4PostClassificationProcessor(StageProcessor):
         fish_detections_stage4 = int(features.get("fish_detection_count", 0))
         fish_avg_confidence_stage4 = float(features.get("fish_avg_confidence", 0.0))
 
+        # Use rules as baseline for is_actual_arrival
         is_actual_arrival, arrival_hits = self._rule_actual_arrival(features)
         is_new_fish_arrival, fish_hits = self._rule_new_fish_arrival(features, event_row, is_actual_arrival)
 
-        model_score: Optional[float] = None
+        model1_score: Optional[float] = None
+        model2_score: Optional[float] = None
         decision_source = "rules"
-        if is_actual_arrival and self.model_artifact is not None:
-            model_score = float(self.model_artifact.predict_proba(features))
-            threshold = self.stage_cfg.model_threshold
-            if model_score >= threshold:
-                is_new_fish_arrival = True
-                fish_hits.append("model_positive")
-            else:
-                is_new_fish_arrival = False
-                fish_hits.append("model_negative")
-            fish_hits.append(f"model_threshold_{threshold:.3f}")
-            decision_source = "model"
+
+        # Two-model cascade: Model 1 gates Model 2
+        if self.model1_artifact is not None:
+            try:
+                model1_score = float(self.model1_artifact.predict_proba(features))
+                model1_threshold = self.stage_cfg.model1_threshold
+                is_actual_arrival = model1_score >= model1_threshold
+                arrival_hits.append(f"model1_score_{model1_score:.3f}")
+                arrival_hits.append(f"model1_threshold_{model1_threshold:.3f}")
+                if is_actual_arrival:
+                    arrival_hits.append("model1_positive")
+                else:
+                    arrival_hits.append("model1_negative")
+                decision_source = "model1"
+            except Exception as exc:
+                self.logger.warning("Model 1 prediction failed: %s", exc)
+
+        # Only run Model 2 if Model 1 says there's a real arrival
+        if is_actual_arrival and self.model2_artifact is not None:
+            try:
+                model2_score = float(self.model2_artifact.predict_proba(features))
+                model2_threshold = self.stage_cfg.model2_threshold
+                is_new_fish_arrival = model2_score >= model2_threshold
+                fish_hits.append(f"model2_score_{model2_score:.3f}")
+                fish_hits.append(f"model2_threshold_{model2_threshold:.3f}")
+                if is_new_fish_arrival:
+                    fish_hits.append("model2_positive")
+                else:
+                    fish_hits.append("model2_negative")
+                decision_source = "model1_model2"
+            except Exception as exc:
+                self.logger.warning("Model 2 prediction failed: %s", exc)
+        elif is_actual_arrival:
+            # Model 1 positive but Model 2 not available
+            is_new_fish_arrival = False
+            fish_hits.append("model2_unavailable")
 
         return {
             "is_actual_arrival": int(is_actual_arrival),
@@ -150,7 +192,7 @@ class Stage4PostClassificationProcessor(StageProcessor):
             "fish_avg_confidence_stage4": fish_avg_confidence_stage4,
             "rule_hits": arrival_hits + fish_hits,
             "features": features,
-            "model_score": model_score,
+            "model_score": model2_score,  # Store Model 2 score as the fish detection score
             "decision_source": decision_source,
         }
 

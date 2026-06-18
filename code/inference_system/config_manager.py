@@ -122,8 +122,12 @@ class Stage4Config(BaseModel):
     min_fish_frames: PositiveInt = 3
     fish_early_presence_ratio: float = Field(default=0.15, ge=0.0, le=1.0)
     use_model: bool = False
-    model_path: Path = Path("models/stage4/tri3_fish_arrival_model.json")
-    model_threshold: float = Field(default=0.5, ge=0.0, le=1.0)
+    model_path: Optional[Path] = None  # Legacy: kept for backward compatibility
+    model_threshold: float = Field(default=0.5, ge=0.0, le=1.0)  # Legacy: kept for backward compatibility
+    model1_path: Path = Path("models/stage4/model1_bird_arrival.json")
+    model2_path: Path = Path("models/stage4/model2_fish_arrival.json")
+    model1_threshold: float = Field(default=0.5, ge=0.0, le=1.0)
+    model2_threshold: float = Field(default=0.5, ge=0.0, le=1.0)
     rule_version: str = "v1"
 
 

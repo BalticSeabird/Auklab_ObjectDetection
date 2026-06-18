@@ -180,6 +180,7 @@ class WorkerPoolManager:
             state_manager=self.state_manager,
             stop_event=self.stop_event,
             poll_interval=self.job_poll_interval,
+            config=self.config,
             gpu_id=spec.gpu_id,
         )
 
@@ -197,6 +198,7 @@ class BaseWorker(threading.Thread):
         state_manager: StateManager,
         stop_event: threading.Event,
         poll_interval: float,
+        config: Config,
         gpu_id: Optional[int] = None,
     ) -> None:
         super().__init__(name=worker_id, daemon=True)
@@ -207,6 +209,7 @@ class BaseWorker(threading.Thread):
         self.state_manager = state_manager
         self.stop_event = stop_event
         self.poll_interval = poll_interval
+        self.config = config
         self.gpu_id = gpu_id
         self.logger = logging.getLogger(f"worker.{worker_id}")
 
@@ -263,14 +266,35 @@ class BaseWorker(threading.Thread):
             return False
 
     def _handle_failure(self, job: VideoJob, *, retryable: bool, error_message: str) -> None:
+        max_retries = self.config.error_handling.max_retries
+        will_retry = retryable and job.retry_count < max_retries
+
         self.state_manager.mark_job_failed(
             job.video_id,
             self.stage,
             error_message=error_message,
-            retryable=retryable,
+            retryable=will_retry,
         )
-        if retryable:
+
+        if will_retry:
+            # Add exponential backoff to prevent hammering the same error
+            backoff_seconds = min(60, 2 ** job.retry_count)  # 1s, 2s, 4s, 8s, ... max 60s
+            self.logger.info(
+                "Retrying %s (attempt %d/%d) after %d second backoff",
+                job.video_id,
+                job.retry_count + 1,
+                max_retries,
+                backoff_seconds,
+            )
+            time.sleep(backoff_seconds)
             self.scheduler.return_job(job, self.stage)
+        elif retryable:
+            self.logger.error(
+                "Max retries (%d) exceeded for %s: %s",
+                max_retries,
+                job.video_id,
+                error_message,
+            )
 
     def _record_metrics(self, video_id: str, metrics: ProcessingMetrics) -> None:
         self.state_manager.record_performance_metrics(

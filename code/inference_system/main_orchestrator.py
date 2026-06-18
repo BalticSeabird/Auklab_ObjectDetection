@@ -1,4 +1,13 @@
-"""Entry point for the multi-stage Auklab inference pipeline."""
+"""Entry point for the multi-stage Auklab inference pipeline.
+
+RUN EXAMPLE:
+
+python3 code/inference_system/main_orchestrator.py --log-level INFO
+
+
+
+
+"""
 
 from __future__ import annotations
 
@@ -82,6 +91,56 @@ def configure_logging(level: str, log_dir: Path | None = None) -> None:
     logging.basicConfig(level=log_level, handlers=handlers)
 
 
+def check_stage1_health(config: Config, state_mgr: StateManager) -> bool:
+    """Health check: verify Stage 1 is producing detection CSVs.
+    
+    Returns True if everything looks healthy, False if potential issues detected.
+    """
+    try:
+        from .path_utils import get_detection_csv_path
+        
+        # Get recent Stage 1 jobs - these are already filtered for completed/failed
+        recent_jobs = state_mgr.query_recent_jobs(stage=ProcessingStage.STAGE1, limit=10)
+        if not recent_jobs:
+            return True  # No jobs yet, can't assess
+        
+        # Check if any recent jobs have actual CSV output
+        csv_found = 0
+        for job in recent_jobs:
+            try:
+                csv_path = get_detection_csv_path(config, job)
+                if csv_path.exists() and csv_path.stat().st_size > 0:
+                    csv_found += 1
+            except Exception:
+                pass
+        
+        # If we have jobs but no CSVs, warn
+        if len(recent_jobs) > 0 and csv_found == 0:
+            logging.warning(
+                "Stage 1 health check: %d recent Stage 1 jobs but 0 detection CSVs found. "
+                "Check that output paths are correct and Stage 1 is writing files properly.",
+                len(recent_jobs)
+            )
+            return False
+        
+        # If we have some CSVs but not many, also warn
+        if len(recent_jobs) > 0 and csv_found < len(recent_jobs) / 2:
+            logging.warning(
+                "Stage 1 health check: only %d/%d recent Stage 1 jobs have CSVs. "
+                "Some Stage 1 output may not be persisting correctly.",
+                csv_found,
+                len(recent_jobs)
+            )
+            return False
+        
+        return True
+    except Exception as e:
+        # Don't crash the main loop if health check fails
+        logging.debug("Stage 1 health check exception (non-fatal): %s", e)
+        return True
+
+
+
 def main(argv: Optional[List[str]] = None) -> None:
     args = parse_args(argv)
 
@@ -97,6 +156,8 @@ def main(argv: Optional[List[str]] = None) -> None:
         logging.info("Resetting stuck jobs older than %ss", args.stuck_timeout)
         reset_count = state_mgr.reset_stuck_jobs(timeout_seconds=args.stuck_timeout)
         logging.info("Reset %s stuck stage entries", reset_count)
+        failed_reset_stage1 = state_mgr.reset_failed_jobs(stage=ProcessingStage.STAGE1)
+        logging.info("Reset %s failed stage1 entries for retry", failed_reset_stage1)
         failed_reset = state_mgr.reset_failed_jobs(stage=ProcessingStage.STAGE2)
         logging.info("Reset %s failed stage2 entries for retry", failed_reset)
         failed_reset_stage3 = state_mgr.reset_failed_jobs(stage=ProcessingStage.STAGE3)
@@ -134,6 +195,9 @@ def main(argv: Optional[List[str]] = None) -> None:
     worker_pool = WorkerPoolManager(config, state_mgr, scheduler, processors)
     worker_pool.start_workers()
 
+    health_check_interval = 300  # Check every 5 minutes
+    last_health_check = time.time()
+
     try:
         while True:
             summary = state_mgr.get_progress_summary()
@@ -145,6 +209,13 @@ def main(argv: Optional[List[str]] = None) -> None:
                 summary.in_progress_videos,
                 summary.failed_videos,
             )
+            
+            # Periodic health check
+            now = time.time()
+            if now - last_health_check > health_check_interval:
+                check_stage1_health(config, state_mgr)
+                last_health_check = now
+            
             if state_mgr.is_all_complete():
                 break
             time.sleep(config.monitoring.update_interval_seconds)

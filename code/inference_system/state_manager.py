@@ -441,6 +441,42 @@ class StateManager:
             remaining = cursor.fetchone()[0]
         return remaining == 0
 
+    def query_recent_jobs(self, stage: ProcessingStage, limit: int = 10) -> List[VideoJob]:
+        """Return the most recently completed jobs for a given stage."""
+        with self._connect() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT v.video_id, v.station, v.year, v.date, v.filename, v.filepath, v.priority_score,
+                       ps.stage, ps.status, ps.completed_at
+                FROM videos v
+                JOIN processing_stages ps ON v.video_id = ps.video_id
+                WHERE ps.stage = ? AND ps.status IN (?, ?)
+                ORDER BY ps.completed_at DESC NULLS LAST
+                LIMIT ?
+                """,
+                (
+                    int(stage),
+                    StageStatus.COMPLETED.value,
+                    StageStatus.FAILED.value,
+                    limit,
+                ),
+            )
+            jobs = []
+            for row in cursor.fetchall():
+                video_id, station, year, date, filename, filepath, priority_score, stage_val, status_val, completed_at = row
+                job = VideoJob(
+                    video_id=video_id,
+                    station=station,
+                    year=year,
+                    date=date,
+                    filename=filename,
+                    filepath=Path(filepath),
+                    priority_score=priority_score,
+                )
+                jobs.append(job)
+            return jobs
+
     def get_videos_for_station_date(self, station: str, date: str) -> List[VideoJob]:
         """Return all registered videos for a given station/date pair."""
         with self._connect() as conn:

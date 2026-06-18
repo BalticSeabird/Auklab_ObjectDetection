@@ -1,259 +1,200 @@
-"""Standalone entry-point for running stage4 post-classification in batch mode."""
+#!/usr/bin/env python3
+"""
+Batch reassess all events in event databases using the trained Stage4 model.
 
-from __future__ import annotations
+This script:
+1. Loads the Stage4 model
+2. Queries all events from event databases
+3. Extracts Stage4 features from detection CSVs
+4. Runs model prediction on each event
+5. Updates the database with new predictions
+
+Usage:
+    python code/inference_system/stage4_batch_runner.py \
+        --events-db-root data/events_db \
+        --model-path models/stage4/tri3_fish_arrival_model.json \
+        --stations TRI3,TRI6,ROST2,ROST3
+"""
 
 import argparse
 import logging
-from dataclasses import dataclass
-from datetime import date, datetime
+import sqlite3
+import sys
 from pathlib import Path
-from typing import Dict, List, Optional, Sequence
+from typing import Dict, List, Optional
+from datetime import datetime
 
 import pandas as pd
 
-from .config_manager import Config, load_config
-from .event_database import EventDatabase
-from .stage4_postclassification import Stage4PostClassificationProcessor
-from .state_manager import StateManager, VideoJob
+PROJECT_CODE_DIR = Path(__file__).resolve().parents[1]
+if str(PROJECT_CODE_DIR) not in sys.path:
+    sys.path.insert(0, str(PROJECT_CODE_DIR))
+
+from inference_system.stage4_modeling import Stage4ModelArtifact, extract_stage4_features
+
+LOGGER = logging.getLogger(__name__)
 
 
-@dataclass(slots=True)
-class Stage4BatchMetrics:
-    events_classified: int = 0
-    events_failed: int = 0
-    videos_processed: int = 0
+def setup_logging(log_dir: Path) -> None:
+    """Configure logging."""
+    log_dir.mkdir(parents=True, exist_ok=True)
+    log_file = log_dir / f"stage4_batch_reassessment_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
 
-
-def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(
-        description="Re-run stage4 post-classification on events grouped by station/date"
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+        handlers=[
+            logging.FileHandler(log_file),
+            logging.StreamHandler(sys.stdout),
+        ],
     )
-    parser.add_argument("--config", type=Path, default=Path("config/system_config.yaml"), help="Path to YAML config")
-    parser.add_argument("--stations", nargs="*", help="Optional list of stations to include")
-    parser.add_argument("--start-date", dest="start_date", help="Minimum date (YYYY-MM-DD)")
-    parser.add_argument("--end-date", dest="end_date", help="Maximum date (YYYY-MM-DD)")
-    parser.add_argument("--limit", type=int, help="Limit the number of station/date pairs to process")
-    parser.add_argument("--force", action="store_true", help="Re-run already classified events")
-    parser.add_argument("--retry-failed", action="store_true", help="Retry events that previously failed")
-    parser.add_argument("--discover-only", action="store_true", help="Only list station/date pairs without processing")
-    parser.add_argument(
-        "--log-level",
-        default="INFO",
-        choices=["DEBUG", "INFO", "WARNING", "ERROR"],
-        help="Root logging level",
-    )
-    return parser.parse_args(argv)
+    LOGGER.info(f"Logging to {log_file}")
 
 
-def main(argv: Optional[Sequence[str]] = None) -> None:
-    args = parse_args(argv)
-    logging.basicConfig(level=getattr(logging, args.log_level.upper(), logging.INFO), format="[%(levelname)s] %(message)s")
+class Stage4BatchReassessor:
+    """Batch reassess events using Stage4 model."""
 
-    config = load_config(args.config)
-    inference_state = StateManager(config.paths.state_db)
-    inference_state.initialize_db()
+    def __init__(
+        self,
+        events_db_root: Path,
+        model_path: Path,
+        stations: List[str],
+    ) -> None:
+        """Initialize the reassessor."""
+        self.events_db_root = Path(events_db_root)
+        self.model_path = Path(model_path)
+        self.stations = stations
+        self.model_artifact: Optional[Stage4ModelArtifact] = None
+        self._load_model()
 
-    allowed_stations = [station.upper() for station in args.stations] if args.stations else None
-    start_date, end_date = _parse_date_bounds(args.start_date, args.end_date)
+    def _load_model(self) -> None:
+        """Load the Stage4 model artifact."""
+        if not self.model_path.exists():
+            LOGGER.error(f"Model file not found: {self.model_path}")
+            return
 
-    # Discover all station/date pairs from event databases
-    batches = _discover_batches(config, allowed_stations, start_date, end_date, args.limit)
-    if not batches:
-        logging.info("No station/date pairs found matching the provided filters")
-        return
-
-    logging.info("Discovered %s station/date pair(s)", len(batches))
-    if args.discover_only:
-        for station, date_str in batches:
-            logging.info("  %s on %s", station, date_str)
-        return
-
-    processor = Stage4BatchProcessor(config, inference_state)
-    total_metrics = Stage4BatchMetrics()
-
-    for station, date_str in batches:
         try:
-            metrics = processor.process_batch(station, date_str, force=args.force, retry_failed=args.retry_failed)
-            total_metrics.events_classified += metrics.events_classified
-            total_metrics.events_failed += metrics.events_failed
-            total_metrics.videos_processed += metrics.videos_processed
-            logging.info(
-                "Stage4 batch %s %s -> %s events classified (%s failed) across %s video(s)",
-                station,
-                date_str,
-                metrics.events_classified,
-                metrics.events_failed,
-                metrics.videos_processed,
-            )
-        except Exception as exc:  # pragma: no cover - orchestration guard
-            logging.exception("Stage4 batch %s %s failed", station, date_str)
+            self.model_artifact = Stage4ModelArtifact.from_path(self.model_path)
+            LOGGER.info(f"Loaded Stage4 model from {self.model_path}")
+        except Exception as e:
+            LOGGER.error(f"Failed to load model: {e}")
+            self.model_artifact = None
 
-    logging.info(
-        "Stage4 batch processing complete: %s total events classified, %s failed",
-        total_metrics.events_classified,
-        total_metrics.events_failed,
-    )
+    def _load_detections(self, csv_path: str) -> pd.DataFrame:
+        """Safely load detections CSV."""
+        try:
+            if not csv_path or not Path(csv_path).exists():
+                return pd.DataFrame()
+            return pd.read_csv(str(csv_path))
+        except Exception as e:
+            LOGGER.warning(f"Failed to load detections from {csv_path}: {e}")
+            return pd.DataFrame()
 
+    def _classify_event(self, event_row: dict) -> Dict:
+        """Classify a single event using the model."""
+        detections_csv = event_row.get("detections_csv_path")
+        if not detections_csv:
+            return {"is_new_fish_arrival": 0, "model_score": None, "decision_source": "rules"}
 
-class Stage4BatchProcessor:
-    """Coordinates post-classification for a single station/date batch."""
+        detections = self._load_detections(detections_csv)
+        if detections.empty:
+            return {"is_new_fish_arrival": 0, "model_score": None, "decision_source": "rules"}
 
-    def __init__(self, config: Config, inference_state: StateManager) -> None:
-        self.config = config
-        self.inference_state = inference_state
-        self.classifier = Stage4PostClassificationProcessor(config)
-        self.logger = logging.getLogger("stage4.processor")
+        stage2_flag = int(event_row.get("arrival_with_fish_stage2", 0))
+        features = extract_stage4_features(detections, stage2_flag=stage2_flag)
 
-    def process_batch(
-        self, station: str, date_str: str, force: bool = False, retry_failed: bool = False
-    ) -> Stage4BatchMetrics:
-        """Process all events for a station/date pair."""
-        event_db = EventDatabase.for_station(self.config, station)
-        event_db.initialize()
+        if self.model_artifact is None:
+            return {"is_new_fish_arrival": 0, "model_score": None, "decision_source": "no_model"}
 
-        # Fetch events for this station/date, optionally filtering by classification status
-        query_date = datetime.strptime(date_str, "%Y-%m-%d").date()
-        events_df = self._fetch_events_for_date(event_db, station, query_date, force=force, retry_failed=retry_failed)
+        try:
+            model_score = float(self.model_artifact.predict_proba(features))
+            is_new_fish_arrival = 1 if model_score >= self.model_artifact.threshold else 0
+            return {"is_new_fish_arrival": is_new_fish_arrival, "model_score": model_score, "decision_source": "model"}
+        except Exception as e:
+            LOGGER.warning(f"Error predicting: {e}")
+            return {"is_new_fish_arrival": 0, "model_score": None, "decision_source": "error"}
 
-        if events_df.empty:
-            self.logger.info("[%s %s] No events to classify", station, date_str)
-            return Stage4BatchMetrics()
+    def process_station(self, station: str) -> bool:
+        """Process all events in a station database."""
+        db_path = self.events_db_root / f"{station}_events.db"
 
-        # Group by video_id to get a job for each video
-        videos_by_id = {}
-        for video_id in events_df["video_id"].unique():
-            job = self.inference_state.get_video(video_id)
-            if job is None:
-                self.logger.warning("[%s %s] No video metadata for %s", station, date_str, video_id)
-                continue
-            videos_by_id[video_id] = job
+        if not db_path.exists():
+            LOGGER.warning(f"Database not found: {db_path}")
+            return False
 
-        if not videos_by_id:
-            self.logger.info("[%s %s] No matching video metadata found", station, date_str)
-            return Stage4BatchMetrics()
+        try:
+            LOGGER.info(f"Processing station: {station}")
+            conn = sqlite3.connect(db_path)
+            conn.row_factory = sqlite3.Row
 
-        classified = 0
-        failed = 0
-        for video_id, job in videos_by_id.items():
-            video_events = events_df[events_df["video_id"] == video_id]
-            for _, event in video_events.iterrows():
-                event_id = str(event.get("event_id", ""))
-                if not event_id:
-                    continue
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT * FROM events
+                WHERE event_type = 'arrival'
+                AND is_actual_arrival = 1
+                AND stage3_status = 'completed'
+                AND detections_csv_path IS NOT NULL
+            """)
+
+            events = cursor.fetchall()
+            LOGGER.info(f"Found {len(events)} events to reassess")
+
+            updated = 0
+            for idx, event in enumerate(events, 1):
+                event_id = event["event_id"]
+                event_dict = dict(event)
+                result = self._classify_event(event_dict)
 
                 try:
-                    labels = self.classifier._classify_event(event)
-                    event_db.update_stage4_labels(
-                        station=station,
-                        event_id=event_id,
-                        is_actual_arrival=labels["is_actual_arrival"],
-                        is_new_fish_arrival=labels["is_new_fish_arrival"],
-                        fish_detections_stage4=labels["fish_detections_stage4"],
-                        fish_avg_confidence_stage4=labels["fish_avg_confidence_stage4"],
-                        rule_version=self.classifier.stage_cfg.rule_version,
-                        rule_hits=labels["rule_hits"],
-                        features=labels["features"],
-                        model_score=labels.get("model_score"),
-                        decision_source=str(labels.get("decision_source", "rules")),
-                    )
-                    classified += 1
-                except Exception as exc:  # pragma: no cover
-                    self.logger.exception("Failed to classify event %s: %s", event_id, exc)
-                    failed += 1
+                    conn.execute("""
+                        UPDATE events
+                        SET is_new_fish_arrival = ?, stage4_model_score = ?, stage4_decision_source = ?, updated_at = CURRENT_TIMESTAMP
+                        WHERE event_id = ?
+                    """, (result["is_new_fish_arrival"], result["model_score"], result["decision_source"], event_id))
+                    updated += 1
 
-        return Stage4BatchMetrics(
-            events_classified=classified,
-            events_failed=failed,
-            videos_processed=len(videos_by_id),
-        )
+                    if idx % 50 == 0:
+                        LOGGER.info(f"  Processed {idx}/{len(events)}")
+                except Exception as e:
+                    LOGGER.warning(f"Failed to update {event_id}: {e}")
 
-    def _fetch_events_for_date(
-        self, event_db: EventDatabase, station: str, query_date: date, force: bool = False, retry_failed: bool = False
-    ) -> pd.DataFrame:
-        """Fetch events for a station on a given date, optionally filtering by classification status."""
-        with event_db._connect() as conn:
-            date_str = query_date.strftime("%Y-%m-%d")
-            base_query = "SELECT * FROM events WHERE station = ? AND date = ?"
-            params: List[str] = [station, date_str]
+            conn.commit()
+            conn.close()
+            LOGGER.info(f"Station {station} complete: {updated} updated")
+            return True
 
-            if not force and not retry_failed:
-                # Default: only unclassified events (stage4_rule_version is NULL)
-                base_query += " AND stage4_rule_version IS NULL"
-            elif retry_failed and not force:
-                # Retry only events that have been classified (stage4_rule_version is NOT NULL)
-                base_query += " AND stage4_rule_version IS NOT NULL"
-            # If force=True, no filtering - reprocess everything
+        except Exception as e:
+            LOGGER.error(f"Error processing {station}: {e}", exc_info=True)
+            return False
 
-            base_query += " ORDER BY COALESCE(second, 0) ASC, event_id ASC"
-            return pd.read_sql_query(base_query, conn, params=params)
+    def run(self) -> bool:
+        """Run batch reassessment."""
+        if self.model_artifact is None:
+            LOGGER.error("Model not loaded")
+            return False
+
+        LOGGER.info(f"Starting batch reassessment for: {self.stations}")
+        success_count = sum(1 for station in self.stations if self.process_station(station))
+        LOGGER.info(f"Complete: {success_count}/{len(self.stations)} stations")
+        return success_count == len(self.stations)
 
 
-def _discover_batches(
-    config: Config,
-    allowed_stations: Optional[Sequence[str]],
-    start_date: Optional[date],
-    end_date: Optional[date],
-    limit: Optional[int],
-) -> List[tuple[str, str]]:
-    """Discover all station/date pairs with events in the event database."""
-    events_db_root = Path(config.paths.events_db_root)
-    if not events_db_root.exists():
-        logging.warning("Event database root does not exist: %s", events_db_root)
-        return []
+def main() -> int:
+    """Main entry point."""
+    parser = argparse.ArgumentParser(description="Batch reassess events using Stage4 model")
+    parser.add_argument("--events-db-root", type=Path, default=Path("data/events_db"))
+    parser.add_argument("--model-path", type=Path, default=Path("models/stage4/tri3_fish_arrival_model.json"))
+    parser.add_argument("--stations", type=str, default="TRI3,TRI6,ROST2,ROST3,ROST4,ROST5,ROST6,FAR3,FAR6,BONDEN5,BONDEN6")
+    parser.add_argument("--log-dir", type=Path, default=Path("logs"))
 
-    batches: List[tuple[str, str]] = []
-    allowed_patterns = [station.upper() for station in allowed_stations] if allowed_stations else []
-    ignored_patterns: List[str] = []
-    if config.filters and getattr(config.filters, "ignored_stations", None):
-        ignored_patterns = [s.upper() for s in config.filters.ignored_stations]
+    args = parser.parse_args()
+    setup_logging(args.log_dir)
 
-    for db_file in sorted(events_db_root.glob("*_events.db")):
-        # Extract station name from filename (e.g., "ROST5_events.db" -> "ROST5")
-        station = db_file.stem.replace("_events", "").upper()
-
-        # Apply ignore list first
-        if any(p and p in station for p in ignored_patterns):
-            continue
-        # Then apply optional allow filters using substring matching
-        if allowed_patterns and not any(p and p in station for p in allowed_patterns):
-            continue
-
-        # Query the database for distinct dates
-        try:
-            event_db = EventDatabase(db_file)
-            with event_db._connect() as conn:
-                cursor = conn.execute(
-                    "SELECT DISTINCT date FROM events WHERE date IS NOT NULL ORDER BY date DESC"
-                )
-                for (date_str,) in cursor.fetchall():
-                    try:
-                        parsed_date = datetime.strptime(date_str, "%Y-%m-%d").date()
-                    except (ValueError, TypeError):
-                        continue
-                    if start_date and parsed_date < start_date:
-                        continue
-                    if end_date and parsed_date > end_date:
-                        continue
-                    batches.append((station, date_str))
-                    if limit and len(batches) >= limit:
-                        return batches
-        except Exception as exc:  # pragma: no cover
-            logging.warning("Failed to query event database %s: %s", db_file, exc)
-
-    return batches
-
-
-def _parse_date_bounds(start: Optional[str], end: Optional[str]) -> tuple[Optional[date], Optional[date]]:
-    parsed_start = _parse_date(start) if start else None
-    parsed_end = _parse_date(end) if end else None
-    if parsed_start and parsed_end and parsed_end < parsed_start:
-        raise ValueError("end-date must be greater than or equal to start-date")
-    return parsed_start, parsed_end
-
-
-def _parse_date(date_str: str) -> date:
-    return datetime.strptime(date_str, "%Y-%m-%d").date()
+    stations = [s.strip() for s in args.stations.split(",") if s.strip()]
+    reassessor = Stage4BatchReassessor(events_db_root=args.events_db_root, model_path=args.model_path, stations=stations)
+    success = reassessor.run()
+    return 0 if success else 1
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

@@ -61,7 +61,9 @@ class EventDetectionProcessor(StageProcessor):
     def process(self, job: VideoJob, context: WorkerContext) -> Optional[ProcessingResult]:  # noqa: ARG002
         detections_csv = get_detection_csv_path(self.config, job)
         if not detections_csv.exists():
-            raise RecoverableError(f"Detections CSV missing for {job.video_id}: {detections_csv}")
+            # Missing CSV is a permanent configuration/setup issue, not transient
+            # No point retrying - Stage 1 inference either succeeded or failed
+            raise PermanentError(f"Detections CSV missing for {job.video_id}: {detections_csv}")
 
         events_df = self._detect_events(job, detections_csv)
         event_db = EventDatabase.for_station(self.config, job.station)

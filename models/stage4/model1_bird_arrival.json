@@ -1,0 +1,53 @@
+{
+  "model_type": "logistic_regression",
+  "target_label": "is_actual_arrival",
+  "feature_names": [
+    "bird_appears_mid_clip",
+    "bird_count_peak",
+    "bird_arrival_timing_ratio",
+    "bird_displacement",
+    "bird_mean_motion",
+    "bird_path_efficiency",
+    "total_frames",
+    "bird_frames"
+  ],
+  "means": [
+    0.0,
+    1132.0625,
+    0.604166666666667,
+    107.01534277822155,
+    5.236077985574782,
+    0.06985996989113245,
+    372.0729166666667,
+    372.0729166666667
+  ],
+  "stds": [
+    1.0,
+    172.39011068044672,
+    0.19432039693935027,
+    68.18301099769032,
+    3.124665788474446,
+    0.05708793512451865,
+    20.207901090738144,
+    20.207901090738144
+  ],
+  "weights": [
+    0.0,
+    0.6038825437226779,
+    0.6388684860359997,
+    1.0847494305986518,
+    0.24462466947287623,
+    0.9349301133833596,
+    -0.1325139435328329,
+    -0.1325139435328329
+  ],
+  "bias": 3.174087095750718,
+  "threshold": 0.5,
+  "metadata": {
+    "station": "TRI3",
+    "feature_count": 8,
+    "training_samples": 138,
+    "positive_samples": 121,
+    "negative_samples": 17
+  }
+}

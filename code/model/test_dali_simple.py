@@ -221,7 +221,7 @@ def test_dali_with_tensorrt(video_path, engine_path):
 def main():
     """Main test function"""
     
-    video_path = "vid/input.mp4"
+    video_path = "./vid/FAR3_20250718T034001.mkv"
     engine_path = "/home/jonas/Documents/vscode/Auklab_ObjectDetection/models/auklab_model_xlarge_combined_4564_v1_clean.trt"
     
     if not os.path.exists(video_path):

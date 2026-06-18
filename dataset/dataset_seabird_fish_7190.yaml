@@ -1,6 +1,8 @@
 train: seabird_fish_7190/images/train
 val: seabird_fish_7190/images/val
 test: seabird_fish_7190/images/test
-nc: 1
+nc: 3
 names:
-- text
+- adult
+- chick
+- fish

@@ -36,6 +36,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import shutil
 
 from roboflow import Roboflow
 
@@ -62,9 +63,38 @@ def main() -> int:
 	project = rf.workspace(args.workspace).project(args.project)
 	dataset = project.version(args.version).download(args.format)
 
+	# Ensure all datasets end up in the central `roboflow_download` folder
+	target_root = os.path.join(os.getcwd(), "roboflow_download")
+	os.makedirs(target_root, exist_ok=True)
+
+	dataset_path = dataset.location
+	dataset_name = os.path.basename(dataset_path.rstrip(os.sep))
+	dest_path = os.path.join(target_root, dataset_name)
+
+	# If destination exists, pick a non-conflicting name
+	if os.path.abspath(dataset_path) != os.path.abspath(dest_path):
+		if os.path.exists(dest_path):
+			base, ext = os.path.splitext(dataset_name)
+			i = 1
+			while True:
+				new_name = f"{base}_{i}{ext}"
+				candidate = os.path.join(target_root, new_name)
+				if not os.path.exists(candidate):
+					dest_path = candidate
+					break
+				i += 1
+		try:
+			shutil.move(dataset_path, dest_path)
+			moved = True
+		except Exception as e:
+			print(f"Warning: failed to move dataset: {e}")
+			moved = False
+	else:
+		moved = True
+
 	print(f"Downloaded dataset version: {args.version}")
 	print(f"Format: {args.format}")
-	print(f"Location: {dataset.location}")
+	print(f"Location: {dest_path if moved else dataset.location}")
 	return 0
 
 
