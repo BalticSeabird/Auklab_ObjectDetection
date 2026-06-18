@@ -26,7 +26,7 @@ sampling:
   quality_probe_prefilter_min: 200
 
   # Maximum number of fish-arrival events to sample.
-  max_events: 40
+  max_events: 2
 
   # Frames sampled from each selected event.
   frames_per_event: 5
@@ -68,7 +68,7 @@ filters:
 
 pre_annotation:
   enabled: true
-  model_path: "models/auklab_yolo26x_seabirdfish_7090_v1.pt"
+  model_path: "models/auklab_yolo26xl_seabird_fish_7190.pt"
 
   # Per-class confidence thresholds for this branch.
   class_thresholds:

@@ -7,6 +7,11 @@ Steps:
 2) sample     - sample still frames from selected clips
 3) annotate   - pre-annotate sampled frames (optional)
 4) upload     - upload frames and annotations to Roboflow (optional)
+
+EXAMPLE (2026-06-18): 
+python3 code/active_learning/run_stage3_active_learning_branch.py \
+    --config config/config_stage3_fishfocus.yaml
+
 """
 
 from __future__ import annotations
