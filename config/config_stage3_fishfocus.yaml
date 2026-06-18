@@ -7,12 +7,12 @@ paths:
   stage3_roots: []
 
   # SQLite source(s): either a single events_db path or events_db_paths list.
-  events_db: "data/events_db/BONDEN6_events.db"
+  events_db: "data/events_db/ROST6_events.db"
   # events_db_paths:
   #   - "data/events_db"
 
   # Where this branch writes all artifacts.
-  output_dir: "data/active_learning_stage3_branch/bonden6_fishfocus02"
+  output_dir: "data/active_learning_stage3_branch/rost6_fishfocus03"
 
 sampling:
   # Deterministic seed for reproducibility.
@@ -26,7 +26,7 @@ sampling:
   quality_probe_prefilter_min: 200
 
   # Maximum number of fish-arrival events to sample.
-  max_events: 100
+  max_events: 40
 
   # Frames sampled from each selected event.
   frames_per_event: 5
@@ -68,19 +68,19 @@ filters:
 
 pre_annotation:
   enabled: true
-  model_path: "models/auklab_yolo26x_seabirdfish_6080_v1.pt"
+  model_path: "models/auklab_yolo26x_seabirdfish_7090_v1.pt"
 
   # Per-class confidence thresholds for this branch.
   class_thresholds:
-    adult: 0.35
-    chick: 0.35
-    fish: 0.22
+    adult: 0.50
+    chick: 0.50
+    fish: 0.50
 
 upload:
   enabled: false
   workspace: ""
   project: ""
   split: "train"
-  batch_name_prefix: "active_learning_stage3_04"
+  batch_name_prefix: "active_learning_stage3_05"
   use_annotations: true
   resume: true
