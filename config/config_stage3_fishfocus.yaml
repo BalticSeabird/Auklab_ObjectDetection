@@ -7,16 +7,16 @@ paths:
   stage3_roots: []
 
   # SQLite source(s): either a single events_db path or events_db_paths list.
-  events_db: "data/events_db/ROST6_events.db"
+  events_db: "data/events_db/FAR6_events.db"
   # events_db_paths:
   #   - "data/events_db"
 
   # Where this branch writes all artifacts.
-  output_dir: "data/active_learning_stage3_branch/rost6_fishfocus03"
+  output_dir: "data/active_learning_stage3_branch/far6_fishfocus03"
 
 sampling:
   # Deterministic seed for reproducibility.
-  random_seed: 46
+  random_seed: 45
 
   # Expensive quality probe (brightness/blur OpenCV reads). Keep disabled for fast runs.
   enable_quality_probe: false
@@ -26,7 +26,7 @@ sampling:
   quality_probe_prefilter_min: 200
 
   # Maximum number of fish-arrival events to sample.
-  max_events: 2
+  max_events: 50
 
   # Frames sampled from each selected event.
   frames_per_event: 5
@@ -81,6 +81,6 @@ upload:
   workspace: ""
   project: ""
   split: "train"
-  batch_name_prefix: "active_learning_stage3_05"
+  batch_name_prefix: "active_learning_stage3_06"
   use_annotations: true
   resume: true

@@ -3,6 +3,21 @@ import shutil
 import random
 from pathlib import Path
 
+
+ROBOFLOW_ROOT = Path("roboflow_download")
+
+
+def resolve_source_base(source_value: str) -> Path:
+    """Resolve a source folder, defaulting to roboflow_download/<source_value>."""
+    source_path = Path(source_value)
+    if source_path.is_absolute():
+        return source_path
+
+    if source_path.exists():
+        return source_path
+
+    return ROBOFLOW_ROOT / source_path
+
 # Example usage:
 # Use multiple source directories? (y/n, default: n): y
 # Enter source directories (one per line, empty line to finish):
@@ -29,7 +44,7 @@ if use_multiple:
         source_dir = input("> ").strip()
         if not source_dir:
             break
-        source_bases.append(Path(source_dir))
+        source_bases.append(resolve_source_base(source_dir))
 
     if not source_bases:
         raise SystemExit("No source directories provided!")
@@ -41,7 +56,7 @@ else:
     base = input("Enter roboflow dataset version number (e.g., 1): ").strip()
     ds_version = input("Enter dataset version (e.g., 4564): ").strip()
     ds_prefix = input("Enter dataset prefix (e.g., tag_detection, ring_detection): ").strip()
-    source_bases = [Path(f"Tag_detection-{base}")]
+    source_bases = [resolve_source_base(f"Tag_detection-{base}")]
 
 source_splits = ['train', 'valid', 'test']
 

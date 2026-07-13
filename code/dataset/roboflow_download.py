@@ -24,15 +24,15 @@ Usage example:
 """
 Usage example:
   export ROBOFLOW_API_KEY="2Z8LedwxqBlKAbVYyz8T"
-  python3 code/dataset/roboflow_download.py \
-	  --workspace research-x1kcu \
-	  --project auklab_seabirdfish \
-	  --version 1 \
-	  --format yolov11
+python3 code/dataset/roboflow_download.py \
+	--workspace research-x1kcu \
+	--project auklab_seabirdfish \
+	--version 2 \
+	--format yolov11
 """
 
 
-from __future__ import annotations
+#from __future__ import annotations
 
 import argparse
 import os

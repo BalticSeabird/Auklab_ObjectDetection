@@ -10,7 +10,7 @@ video clips suitable for crowdsourced validation and citizen engagement.
 python3 code/validation/generate_wwf_clips.py \
     --num-events 300 \
     --events-db-root data/events_db \
-    --min-fish-detections 75 \
+    --min-fish-detections 120 \
     --output-base /mnt/BSP_NAS2_work/temp \
     --skip-stations ROST2,ROST3,ROST4,BONDEN5 \
     --new-fish-only \
