@@ -18,7 +18,7 @@ paths:
   inference_output: /mnt/BSP_NAS2_work/auklab_model/inference/
   event_analysis_output: /mnt/BSP_NAS2_work/auklab_model/event_data/
   clips_output: /mnt/BSP_NAS2_work/auklab_model/event_data/
-  detection_model: models/auklab_yolo26xl_seabird_fish_7190.pt
+  detection_model: models/auklab_yolo26x_seabird_fish_10000_V2.pt
   state_db: data/processing_state.db
   stage3_state_db: data/stage3_processing_state.db
   events_db_root: data/events_db
@@ -85,7 +85,7 @@ priorities:
   #- FAR6
 filters:
   date_range:
-    start: '2025-05-01'
+    start: '2019-05-01'
     end: '2025-07-15'
   # Stations listed here are completely ignored when discovering videos
   # and building the processing database. Matching is case-insensitive

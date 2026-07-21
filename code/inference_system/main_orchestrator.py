@@ -2,8 +2,11 @@
 
 RUN EXAMPLE:
 
-python3 code/inference_system/main_orchestrator.py --log-level INFO
-
+python3 code/inference_system/main_orchestrator.py \
+    --log-level INFO \
+    --skip-discovery \
+    --config config/system_config.yaml \
+    2>&1 | tee ../../../../../mnt/BSP_NAS2_work/auklab_model/inference_$(date +%Y%m%d_%H%M%S).log
 
 
 

@@ -1,11 +1,11 @@
 task: detect
 mode: train
 model: models/yolo26x.pt
-data: dataset/dataset_seabird_fish_7190.yaml
+data: dataset/dataset_seabird_fish_10000.yaml
 epochs: 100
 time: null
 patience: 100
-batch: 32
+batch: 16
 imgsz: 680
 save: true
 save_period: -1
@@ -13,7 +13,7 @@ cache: false
 device: 0,1
 workers: 8
 project: null
-name: train30
+name: train41
 exist_ok: false
 pretrained: true
 optimizer: auto
@@ -107,4 +107,4 @@ auto_augment: randaugment
 erasing: 0.4
 cfg: null
 tracker: botsort.yaml
-save_dir: /home/jonas/Documents/vscode/Auklab_OD/runs/detect/train30
+save_dir: /home/jonas/Documents/vscode/Auklab_OD/runs/detect/train41
